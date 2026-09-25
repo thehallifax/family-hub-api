@@ -59,6 +59,7 @@ class GoogleOAuthServiceTest {
         config.setClientId("test-client-id");
         config.setClientSecret("test-client-secret");
         config.setRedirectUri("http://localhost:8080/api/google/callback");
+        config.setFrontendRedirectUrl("http://localhost:8080");
 
         oauthService = new GoogleOAuthService(config, tokenRepository, memberRepository, encryptionService, stateStore,
                 syncedCalendarRepository, calendarEventRepository, restClient);
@@ -83,6 +84,26 @@ class GoogleOAuthServiceTest {
         assertThat(url).contains("scope=");
         assertThat(url).contains("calendar.events.readonly");
         assertThat(url).contains("calendar.calendarlist.readonly");
+    }
+
+    @Test
+    void buildAuthorizationUrl_unconfigured_rejectsBeforeGeneratingState() {
+        config.setClientId(" ");
+        assertThatThrownBy(() -> oauthService.buildAuthorizationUrl(UUID.randomUUID()))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("not configured");
+        verifyNoInteractions(stateStore);
+    }
+
+    @Test
+    void connectionStatus_reportsCapabilityWithoutSecrets() {
+        UUID memberId = UUID.randomUUID();
+        assertThat(oauthService.getConnectionStatus(memberId).configured()).isTrue();
+        config.setClientSecret("");
+        assertThat(oauthService.getConnectionStatus(memberId).configured()).isFalse();
+        config.setClientSecret("test-client-secret");
+        config.setRedirectUri("not-a-url");
+        assertThat(oauthService.getConnectionStatus(memberId).configured()).isFalse();
     }
 
     @Test

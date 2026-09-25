@@ -29,7 +29,7 @@ google:
     client-id: test-client-id
     client-secret: test-client-secret
     redirect-uri: http://localhost:8080/api/google/callback
-    frontend-redirect-url: http://localhost:5173/settings?googleConnected=true
+    frontend-redirect-url: http://localhost:5173/settings
 
 security:
   # Base64-encoded 32-byte key for AES-256

@@ -75,6 +75,9 @@ public class GoogleOAuthService {
     }
 
     public String buildAuthorizationUrl(UUID memberId) {
+        if (!config.isConfigured()) {
+            throw new BadRequestException("Google Calendar integration is not configured on this server");
+        }
         String state = stateStore.generateState(memberId);
         return AUTH_URL + "?" +
                 "client_id=" + encode(config.getClientId()) +
@@ -174,7 +177,7 @@ public class GoogleOAuthService {
                     .toList()
                 : List.of();
 
-        return new GoogleConnectionStatus(connected, calendars);
+        return new GoogleConnectionStatus(config.isConfigured(), connected, calendars);
     }
 
     private static String encode(String value) {

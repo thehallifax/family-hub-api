@@ -107,7 +107,7 @@ class GoogleCalendarSyncServiceTest {
         when(googleEventMapper.toExceptionEntity(eq(exceptionEvent), eq(syncedCal), eq(parentEntity)))
                 .thenReturn(exceptionEntity);
 
-        when(calendarEventRepository.findByGoogleEventId("parent-123"))
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "parent-123"))
                 .thenReturn(Optional.of(parentEntity));
 
         syncService.fullSync(syncedCal, calendarClient);
@@ -134,7 +134,7 @@ class GoogleCalendarSyncServiceTest {
 
         Calendar calendarClient = mockCalendarClient(response);
 
-        when(calendarEventRepository.findByGoogleEventId("nonexistent-parent"))
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "nonexistent-parent"))
                 .thenReturn(Optional.empty());
 
         syncService.fullSync(syncedCal, calendarClient);
@@ -312,7 +312,7 @@ class GoogleCalendarSyncServiceTest {
         CalendarEvent mappedEntity = new CalendarEvent();
         mappedEntity.setGoogleEventId("new-evt-1");
         when(googleEventMapper.toEntity(eq(newGoogleEvent), eq(syncedCal))).thenReturn(mappedEntity);
-        when(calendarEventRepository.findByGoogleEventId("new-evt-1")).thenReturn(Optional.empty());
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "new-evt-1")).thenReturn(Optional.empty());
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(newGoogleEvent));
 
@@ -335,7 +335,7 @@ class GoogleCalendarSyncServiceTest {
         mappedEntity.setTitle("Updated Title");
 
         when(googleEventMapper.toEntity(eq(updatedGoogleEvent), eq(syncedCal))).thenReturn(mappedEntity);
-        when(calendarEventRepository.findByGoogleEventId("existing-evt-1")).thenReturn(Optional.of(existingEntity));
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "existing-evt-1")).thenReturn(Optional.of(existingEntity));
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(updatedGoogleEvent));
 
@@ -351,7 +351,7 @@ class GoogleCalendarSyncServiceTest {
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(cancelledEvent));
 
-        verify(calendarEventRepository).deleteByGoogleEventId("cancel-evt-1");
+        verify(calendarEventRepository).deleteBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "cancel-evt-1");
         verify(googleEventMapper, never()).toEntity(any(), any());
     }
 
@@ -366,18 +366,18 @@ class GoogleCalendarSyncServiceTest {
 
         CalendarEvent parentEntity = new CalendarEvent();
         parentEntity.setId(UUID.randomUUID());
-        when(calendarEventRepository.findByGoogleEventId("parent-1")).thenReturn(Optional.of(parentEntity));
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "parent-1")).thenReturn(Optional.of(parentEntity));
 
         CalendarEvent mappedEntity = new CalendarEvent();
         mappedEntity.setCancelled(true);
         when(googleEventMapper.toExceptionEntity(eq(cancelledException), eq(syncedCal), eq(parentEntity)))
                 .thenReturn(mappedEntity);
-        when(calendarEventRepository.findByGoogleEventId("exc-cancel-1")).thenReturn(Optional.empty());
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "exc-cancel-1")).thenReturn(Optional.empty());
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(cancelledException));
 
         verify(calendarEventRepository).save(mappedEntity);
-        verify(calendarEventRepository, never()).deleteByGoogleEventId("exc-cancel-1");
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "exc-cancel-1");
     }
 
     @Test
@@ -388,7 +388,7 @@ class GoogleCalendarSyncServiceTest {
         orphanedException.setOriginalStartTime(new EventDateTime()
                 .setDateTime(new DateTime("2025-06-15T09:00:00-04:00")));
 
-        when(calendarEventRepository.findByGoogleEventId("missing-parent")).thenReturn(Optional.empty());
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "missing-parent")).thenReturn(Optional.empty());
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(orphanedException));
 
@@ -412,14 +412,14 @@ class GoogleCalendarSyncServiceTest {
         when(googleEventMapper.toEntity(eq(parentEvent), eq(syncedCal))).thenReturn(parentEntity);
         // First call (during upsertEvent for parent): not found -> insert
         // Second call (during upsertException for parent lookup): found
-        when(calendarEventRepository.findByGoogleEventId("parent-1"))
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "parent-1"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(parentEntity));
 
         CalendarEvent exceptionEntity = new CalendarEvent();
         when(googleEventMapper.toExceptionEntity(eq(exceptionEvent), eq(syncedCal), eq(parentEntity)))
                 .thenReturn(exceptionEntity);
-        when(calendarEventRepository.findByGoogleEventId("parent-1_20250622")).thenReturn(Optional.empty());
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(syncedCal, EventSource.GOOGLE, "parent-1_20250622")).thenReturn(Optional.empty());
 
         syncService.persistIncrementalChanges(syncedCal, java.util.List.of(exceptionEvent, parentEvent));
 

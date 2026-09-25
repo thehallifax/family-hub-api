@@ -41,6 +41,8 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEvent, UU
 
     Optional<CalendarEvent> findByRecurringEventAndOriginalDate(CalendarEvent recurringEvent, LocalDate originalDate);
 
-    Optional<CalendarEvent> findByGoogleEventId(String googleEventId);
-    void deleteByGoogleEventId(String googleEventId);
+    Optional<CalendarEvent> findBySyncedCalendarAndSourceAndGoogleEventId(
+            GoogleSyncedCalendar syncedCalendar, EventSource source, String googleEventId);
+    void deleteBySyncedCalendarAndSourceAndGoogleEventId(
+            GoogleSyncedCalendar syncedCalendar, EventSource source, String googleEventId);
 }

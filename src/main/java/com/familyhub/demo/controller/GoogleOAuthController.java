@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.UUID;
@@ -43,11 +44,9 @@ public class GoogleOAuthController {
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String state,
             @RequestParam(required = false) String error) {
-        String redirectUrl = googleOAuthConfig.getFrontendRedirectUrl();
-
         if (error != null || code == null) {
             return ResponseEntity.status(302)
-                    .location(URI.create(redirectUrl + "?error=consent_denied"))
+                    .location(frontendRedirect("error", "consent_denied"))
                     .build();
         }
 
@@ -59,13 +58,22 @@ public class GoogleOAuthController {
         } catch (Exception e) {
             log.error("Token exchange failed for member {}: {}", memberId, e.getMessage());
             return ResponseEntity.status(302)
-                    .location(URI.create(redirectUrl + "?error=token_exchange_failed"))
+                    .location(frontendRedirect("error", "token_exchange_failed"))
                     .build();
         }
 
         return ResponseEntity.status(302)
-                .location(URI.create(redirectUrl + "?googleConnected=true"))
+                .location(frontendRedirect("googleConnected", "true"))
                 .build();
+    }
+
+    private URI frontendRedirect(String parameter, String value) {
+        return UriComponentsBuilder.fromUriString(googleOAuthConfig.getFrontendRedirectUrl())
+                .replaceQueryParam("googleConnected")
+                .replaceQueryParam("error")
+                .queryParam(parameter, value)
+                .build()
+                .toUri();
     }
 
     @DeleteMapping("/disconnect/{memberId}")

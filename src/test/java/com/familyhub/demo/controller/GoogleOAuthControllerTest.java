@@ -3,6 +3,7 @@ package com.familyhub.demo.controller;
 import com.familyhub.demo.config.GoogleOAuthConfig;
 import com.familyhub.demo.config.SecurityConfig;
 import com.familyhub.demo.dto.GoogleConnectionStatus;
+import com.familyhub.demo.exception.BadRequestException;
 import com.familyhub.demo.security.JwtAuthenticationEntryPoint;
 import com.familyhub.demo.security.JwtAuthenticationFilter;
 import com.familyhub.demo.security.WithMockFamily;
@@ -27,6 +28,7 @@ import static com.familyhub.demo.TestDataFactory.MEMBER_ID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -78,25 +80,40 @@ class GoogleOAuthControllerTest {
 
     @Test
     @WithMockFamily
+    void getAuthorizationUrl_unconfigured_returnsStructuredBadRequest() throws Exception {
+        when(googleOAuthService.buildAuthorizationUrl(MEMBER_ID))
+                .thenThrow(new BadRequestException("Google Calendar integration is not configured on this server"));
+
+        mockMvc.perform(get("/api/google/auth").param("memberId", MEMBER_ID.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("not configured")));
+    }
+
+    @Test
+    @WithMockFamily
     void getStatus_connected_returnsTrueWithCalendars() throws Exception {
         when(googleOAuthService.getConnectionStatus(MEMBER_ID))
-                .thenReturn(new GoogleConnectionStatus(true, List.of()));
+                .thenReturn(new GoogleConnectionStatus(true, true, List.of()));
 
-        mockMvc.perform(get("/api/google/status/{memberId}", MEMBER_ID))
+        String response = mockMvc.perform(get("/api/google/status/{memberId}", MEMBER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.connected").value(true))
-                .andExpect(jsonPath("$.data.calendars").isArray());
+                .andExpect(jsonPath("$.data.configured").value(true))
+                .andExpect(jsonPath("$.data.calendars").isArray())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(response).doesNotContain("clientSecret", "accessToken", "refreshToken", "encryptionKey");
     }
 
     @Test
     @WithMockFamily
     void getStatus_disconnected_returnsFalseWithEmptyCalendars() throws Exception {
         when(googleOAuthService.getConnectionStatus(MEMBER_ID))
-                .thenReturn(new GoogleConnectionStatus(false, List.of()));
+                .thenReturn(new GoogleConnectionStatus(false, false, List.of()));
 
         mockMvc.perform(get("/api/google/status/{memberId}", MEMBER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.connected").value(false))
+                .andExpect(jsonPath("$.data.configured").value(false))
                 .andExpect(jsonPath("$.data.calendars").isEmpty());
     }
 
@@ -136,6 +153,19 @@ class GoogleOAuthControllerTest {
     }
 
     @Test
+    void callback_existingGoogleConnectedParameter_isReplacedOnce() throws Exception {
+        String stateToken = UUID.randomUUID().toString();
+        when(googleOAuthService.consumeState(stateToken)).thenReturn(Optional.of(MEMBER_ID));
+        when(googleOAuthConfig.getFrontendRedirectUrl())
+                .thenReturn("http://localhost:5173/settings?googleConnected=true&googleConnected=true");
+
+        mockMvc.perform(get("/api/google/callback")
+                        .param("code", "test-auth-code").param("state", stateToken))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", "http://localhost:5173/settings?googleConnected=true"));
+    }
+
+    @Test
     void callback_invalidState_returns400() throws Exception {
         when(googleOAuthService.consumeState("bogus-state")).thenReturn(Optional.empty());
 
@@ -148,7 +178,7 @@ class GoogleOAuthControllerTest {
     @Test
     void callback_consentDenied_redirectsWithError() throws Exception {
         when(googleOAuthConfig.getFrontendRedirectUrl())
-                .thenReturn("http://localhost:5173/settings");
+                .thenReturn("http://localhost:5173/settings?googleConnected=true");
 
         mockMvc.perform(get("/api/google/callback")
                         .param("error", "access_denied")
