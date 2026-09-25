@@ -17,6 +17,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.DayOfWeek;
 import java.util.UUID;
 
 @Entity
@@ -42,6 +43,13 @@ public class ChoreTemplate {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ChoreCadence cadence;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "due_weekday", length = 9)
+    private DayOfWeek dueWeekday;
+
+    @Column(name = "due_day_of_month")
+    private Integer dueDayOfMonth;
 
     @Column(nullable = false)
     private LocalDate activeFrom;

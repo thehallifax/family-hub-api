@@ -4,6 +4,7 @@ import com.familyhub.demo.dto.ChoreAssigneeGroupResponse;
 import com.familyhub.demo.dto.ChoreBoardItemResponse;
 import com.familyhub.demo.dto.ChoreBoardResponse;
 import com.familyhub.demo.dto.ChoreCurrentPeriodStateResponse;
+import com.familyhub.demo.dto.ChoreDueState;
 import com.familyhub.demo.dto.ChoreScopeBoardResponse;
 import com.familyhub.demo.dto.ChoreTemplateResponse;
 import com.familyhub.demo.dto.CreateChoreTemplateRequest;
@@ -96,6 +97,9 @@ public class ChoreService {
         template.setAssignedToMember(assignedToMember);
         template.setTitle(request.title().trim());
         template.setCadence(request.cadence());
+        validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth());
+        template.setDueWeekday(request.dueWeekday());
+        template.setDueDayOfMonth(request.dueDayOfMonth());
         template.setActiveFrom(request.activeFrom());
 
         return toTemplateResponse(choreTemplateRepository.save(template));
@@ -116,7 +120,14 @@ public class ChoreService {
             template.setAssignedToMember(requireAssignedMember(family, request.assignedToMemberId()));
         }
         if (request.cadence() != null) {
+            // A cadence-bearing PATCH replaces the schedule. Nulls explicitly mean
+            // "any day" and safely clear fields incompatible with the new cadence.
+            validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth());
             template.setCadence(request.cadence());
+            template.setDueWeekday(request.dueWeekday());
+            template.setDueDayOfMonth(request.dueDayOfMonth());
+        } else if (request.dueWeekday() != null || request.dueDayOfMonth() != null) {
+            throw new BadRequestException("Include cadence when changing a chore schedule");
         }
         if (request.activeFrom() != null) {
             template.setActiveFrom(request.activeFrom());
@@ -148,7 +159,7 @@ public class ChoreService {
                 .orElse(null);
 
         if (existingCompletion != null) {
-            return toCurrentPeriodStateResponse(template, period, existingCompletion);
+            return toCurrentPeriodStateResponse(template, period, existingCompletion, today);
         }
 
         try {
@@ -158,7 +169,7 @@ public class ChoreService {
                     period.periodEndDate(),
                     LocalDateTime.now(clock)
             );
-            return toCurrentPeriodStateResponse(template, period, saved);
+            return toCurrentPeriodStateResponse(template, period, saved, today);
         } catch (DataIntegrityViolationException ex) {
             ChorePeriodCompletion concurrentCompletion = chorePeriodCompletionRepository
                     .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
@@ -167,7 +178,7 @@ public class ChoreService {
                             period.periodEndDate()
                     )
                     .orElseThrow(() -> ex);
-            return toCurrentPeriodStateResponse(template, period, concurrentCompletion);
+            return toCurrentPeriodStateResponse(template, period, concurrentCompletion, today);
         }
     }
 
@@ -194,7 +205,7 @@ public class ChoreService {
                 period.scope(),
                 period.periodStartDate(),
                 period.periodEndDate(),
-                toBoardItem(template, null)
+                toBoardItem(template, null, today)
         );
     }
 
@@ -229,7 +240,7 @@ public class ChoreService {
                 .toList();
 
         List<ChoreAssigneeGroupResponse> groups = assignees.stream()
-                .map(member -> buildAssigneeGroup(member, scopeTemplates, completionsByTemplateId))
+                .map(member -> buildAssigneeGroup(member, scopeTemplates, completionsByTemplateId, today))
                 .toList();
 
         int total = groups.stream().mapToInt(group -> group.summary().total()).sum();
@@ -268,12 +279,13 @@ public class ChoreService {
     private ChoreAssigneeGroupResponse buildAssigneeGroup(
             FamilyMember member,
             List<ChoreTemplate> templates,
-            Map<UUID, ChorePeriodCompletion> completionsByTemplateId
+            Map<UUID, ChorePeriodCompletion> completionsByTemplateId,
+            LocalDate today
     ) {
         List<ChoreBoardItemResponse> chores = templates.stream()
                 .filter(template -> template.getAssignedToMember().getId().equals(member.getId()))
                 .sorted(templateComparator(completionsByTemplateId))
-                .map(template -> toBoardItem(template, completionsByTemplateId.get(template.getId())))
+                .map(template -> toBoardItem(template, completionsByTemplateId.get(template.getId()), today))
                 .toList();
 
         int total = chores.size();
@@ -364,25 +376,58 @@ public class ChoreService {
     private ChoreCurrentPeriodStateResponse toCurrentPeriodStateResponse(
             ChoreTemplate template,
             ResolvedPeriod period,
-            ChorePeriodCompletion completion
+            ChorePeriodCompletion completion,
+            LocalDate today
     ) {
         return new ChoreCurrentPeriodStateResponse(
                 period.scope(),
                 period.periodStartDate(),
                 period.periodEndDate(),
-                toBoardItem(template, completion)
+                toBoardItem(template, completion, today)
         );
     }
 
-    private ChoreBoardItemResponse toBoardItem(ChoreTemplate template, ChorePeriodCompletion completion) {
+    private ChoreBoardItemResponse toBoardItem(ChoreTemplate template, ChorePeriodCompletion completion,
+                                               LocalDate today) {
+        LocalDate dueDate = effectiveDueDate(template, today);
+        ChoreDueState dueState = completion != null ? ChoreDueState.COMPLETE
+                : dueDate == null ? ChoreDueState.UNSCHEDULED
+                : today.isBefore(dueDate) ? ChoreDueState.UPCOMING
+                : today.isAfter(dueDate) ? ChoreDueState.OVERDUE : ChoreDueState.DUE;
         return new ChoreBoardItemResponse(
                 template.getId(),
                 template.getTitle(),
                 template.getCadence(),
                 template.getAssignedToMember().getId(),
                 completion != null,
-                completion != null ? completion.getCompletedAt() : null
+                completion != null ? completion.getCompletedAt() : null,
+                template.getDueWeekday(),
+                template.getDueDayOfMonth(),
+                dueDate,
+                dueState
         );
+    }
+
+    private LocalDate effectiveDueDate(ChoreTemplate template, LocalDate today) {
+        return switch (template.getCadence()) {
+            case DAILY -> today;
+            case WEEKLY -> template.getDueWeekday() == null ? null
+                    : today.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
+                            .plusDays(template.getDueWeekday().getValue() % 7);
+            case MONTHLY -> template.getDueDayOfMonth() == null ? null
+                    : today.withDayOfMonth(Math.min(template.getDueDayOfMonth(), today.lengthOfMonth()));
+        };
+    }
+
+    private void validateSchedule(ChoreCadence cadence, DayOfWeek weekday, Integer dayOfMonth) {
+        if (dayOfMonth != null && (dayOfMonth < 1 || dayOfMonth > 31)) {
+            throw new BadRequestException("Due day of month must be between 1 and 31");
+        }
+        if ((cadence == ChoreCadence.DAILY && (weekday != null || dayOfMonth != null))
+                || (cadence == ChoreCadence.WEEKLY && dayOfMonth != null)
+                || (cadence == ChoreCadence.MONTHLY && weekday != null)) {
+            throw new BadRequestException("Schedule does not match chore cadence");
+        }
     }
 
     private ChoreTemplateResponse toTemplateResponse(ChoreTemplate template) {
@@ -394,7 +439,9 @@ public class ChoreService {
                 template.getActiveFrom(),
                 template.getArchivedAt() != null,
                 template.getCreatedAt(),
-                template.getUpdatedAt()
+                template.getUpdatedAt(),
+                template.getDueWeekday(),
+                template.getDueDayOfMonth()
         );
     }
 

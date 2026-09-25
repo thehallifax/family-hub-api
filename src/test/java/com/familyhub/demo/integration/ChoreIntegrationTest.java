@@ -173,6 +173,56 @@ class ChoreIntegrationTest {
 
     @Test
     @WithMockFamily
+    void scheduledTemplate_roundTripsApiAndKeepsPeriodCompletion() throws Exception {
+        String location = mockMvc.perform(post("/api/chores/templates")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Bins","assignedToMemberId":"00000000-0000-0000-0000-000000000002",
+                                 "cadence":"WEEKLY","activeFrom":"2026-05-19","dueWeekday":"TUESDAY"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dueWeekday").value("TUESDAY"))
+                .andReturn().getResponse().getHeader("Location");
+        String templateId = location.substring(location.lastIndexOf('/') + 1);
+        mockMvc.perform(get("/api/chores/board"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thisWeek.assignees[0].chores[0].dueDate").value("2026-05-19"))
+                .andExpect(jsonPath("$.data.thisWeek.assignees[0].chores[0].dueState").value("DUE"));
+        mockMvc.perform(put("/api/chores/templates/{id}/current-period-completion", templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"scope\":\"THIS_WEEK\",\"periodStartDate\":\"2026-05-17\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.dueState").value("COMPLETE"));
+        mockMvc.perform(patch("/api/chores/templates/{id}", templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cadence\":\"MONTHLY\",\"dueWeekday\":null,\"dueDayOfMonth\":31}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.dueWeekday").isEmpty())
+                .andExpect(jsonPath("$.data.dueDayOfMonth").value(31));
+        mockMvc.perform(get("/api/chores/board"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueDate").value("2026-05-31"))
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueState").value("UPCOMING"));
+        Integer completionCount = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chore_period_completion WHERE chore_template_id = ?", Integer.class, UUID.fromString(templateId));
+        assertThat(completionCount).isEqualTo(1);
+    }
+
+    @Test
+    @WithMockFamily
+    void invalidScheduleCombinationIsRejectedByApi() throws Exception {
+        mockMvc.perform(post("/api/chores/templates")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Bins","assignedToMemberId":"00000000-0000-0000-0000-000000000002",
+                                 "cadence":"DAILY","activeFrom":"2026-05-19","dueWeekday":"TUESDAY"}
+                                """))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM chore_template", Integer.class)).isZero();
+    }
+
+    @Test
+    @WithMockFamily
     void activeFrom_afterCurrentPeriod_isExcludedFromBoard() throws Exception {
         mockMvc.perform(post("/api/chores/templates")
                         .contentType(MediaType.APPLICATION_JSON)

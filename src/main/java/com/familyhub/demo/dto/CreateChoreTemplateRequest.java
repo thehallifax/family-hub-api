@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
+import java.time.DayOfWeek;
 import java.util.UUID;
 
 public record CreateChoreTemplateRequest(
@@ -22,6 +23,14 @@ public record CreateChoreTemplateRequest(
 
         @NotNull
         @JsonFormat(pattern = "yyyy-MM-dd")
-        LocalDate activeFrom
+        LocalDate activeFrom,
+
+        DayOfWeek dueWeekday,
+
+        Integer dueDayOfMonth
 ) {
+    public CreateChoreTemplateRequest(String title, UUID assignedToMemberId,
+                                      ChoreCadence cadence, LocalDate activeFrom) {
+        this(title, assignedToMemberId, cadence, activeFrom, null, null);
+    }
 }
