@@ -274,7 +274,9 @@ public class GoogleCalendarSyncService {
 
     /**
      * Copies mutable fields from updated entity onto existing entity.
-     * Preserves: id, googleEventId, source, member, family, syncedCalendar, recurringEvent, originalDate.
+     * Preserves: id, googleEventId, source, sourceOwnerMember, audienceType,
+     * audienceMembers, family, syncedCalendar, recurringEvent, originalDate.
+     * Google audience is read-only locally; a full sync reimports from source.
      * DD-3: Field list must stay in sync with CalendarEvent entity changes.
      */
     void updateExistingEvent(CalendarEvent existing, CalendarEvent updated) {

@@ -8,6 +8,8 @@ import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.List;
+import com.familyhub.demo.model.EventAudienceType;
 
 public record CalendarEventRequest(
         @NotEmpty
@@ -27,7 +29,10 @@ public record CalendarEventRequest(
         LocalDate date,
 
         @NotNull
-        UUID memberId,
+        EventAudienceType audienceType,
+
+        @NotNull
+        List<UUID> memberIds,
 
         // optional
         Boolean isAllDay,
@@ -47,4 +52,12 @@ public record CalendarEventRequest(
         @Size(max = 2000, message = "Description must be 2000 characters or less")
         String description
 ) {
+    /** Old Java test fixtures; HTTP clients must send the explicit audience fields. */
+    public CalendarEventRequest(String title, String startTime, String endTime,
+                                LocalDate date, UUID memberId, Boolean isAllDay,
+                                String location, LocalDate endDate, String recurrenceRule,
+                                String description) {
+        this(title, startTime, endTime, date, EventAudienceType.MEMBERS,
+                List.of(memberId), isAllDay, location, endDate, recurrenceRule, description);
+    }
 }

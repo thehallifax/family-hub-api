@@ -10,6 +10,9 @@ import com.familyhub.demo.model.Family;
 import com.familyhub.demo.model.FamilyMember;
 import com.familyhub.demo.repository.ChoreTemplateRepository;
 import com.familyhub.demo.repository.FamilyMemberRepository;
+import com.familyhub.demo.repository.CalendarEventRepository;
+import com.familyhub.demo.model.EventAudienceType;
+import com.familyhub.demo.model.EventSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -26,6 +29,7 @@ import java.util.UUID;
 public class FamilyMemberService {
     private final FamilyMemberRepository familyMemberRepository;
     private final ChoreTemplateRepository choreTemplateRepository;
+    private final CalendarEventRepository calendarEventRepository;
 
     public List<FamilyMemberResponse> findAllMembers(Family family) {
          return familyMemberRepository.findByFamily(family)
@@ -89,6 +93,19 @@ public class FamilyMemberService {
             throw new BadRequestException("Reassign or archive this member's recurring chores before deleting them.");
         }
 
+        // Existing sole-member events disappeared with the old member_id cascade.
+        // Keep shared events, but never leave a MEMBERS event with no audience.
+        calendarEventRepository.deleteBySourceOwnerMemberAndSource(toBeDeleted, EventSource.GOOGLE);
+        for (var event : calendarEventRepository.findDistinctByAudienceMembersContaining(toBeDeleted)) {
+            if (event.getAudienceType() == EventAudienceType.MEMBERS) {
+                if (event.getAudienceMembers().size() == 1) {
+                    calendarEventRepository.delete(event);
+                } else {
+                    event.getAudienceMembers().remove(toBeDeleted);
+                }
+            }
+        }
+        calendarEventRepository.flush();
         familyMemberRepository.delete(toBeDeleted);
         log.info("Family member deleted, memberId={}, familyId={}", familyMemberId, family.getId());
     }

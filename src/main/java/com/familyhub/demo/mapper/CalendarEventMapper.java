@@ -7,12 +7,14 @@ import com.familyhub.demo.model.CalendarEvent;
 import com.familyhub.demo.model.EventSource;
 import com.familyhub.demo.model.Family;
 import com.familyhub.demo.model.FamilyMember;
+import com.familyhub.demo.model.EventAudienceType;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
+import java.util.List;
 
 public class CalendarEventMapper {
     private CalendarEventMapper() {}
@@ -20,14 +22,15 @@ public class CalendarEventMapper {
 
 
 
-    public static CalendarEvent toEntity(CalendarEventRequest request, Family family, FamilyMember familyMember) {
+    public static CalendarEvent toEntity(CalendarEventRequest request, Family family, List<FamilyMember> members) {
         CalendarEvent calendarEvent = new CalendarEvent();
 
         calendarEvent.setTitle(request.title());
         calendarEvent.setStartTime(parseTime(request.startTime()));
         calendarEvent.setEndTime(parseTime(request.endTime()));
         calendarEvent.setDate(request.date());
-        calendarEvent.setMember(familyMember);
+        calendarEvent.setAudienceType(request.audienceType());
+        calendarEvent.getAudienceMembers().addAll(members);
         calendarEvent.setFamily(family);
         calendarEvent.setAllDay(request.isAllDay() != null && request.isAllDay());
         calendarEvent.setLocation(request.location());
@@ -39,6 +42,10 @@ public class CalendarEventMapper {
         return  calendarEvent;
     }
 
+    public static CalendarEvent toEntity(CalendarEventRequest request, Family family, FamilyMember member) {
+        return toEntity(request, family, List.of(member));
+    }
+
     public static CalendarEventResponse toDto(CalendarEvent calendarEvent) {
         return CalendarEventResponse.builder()
                 .id(calendarEvent.getId())
@@ -46,7 +53,9 @@ public class CalendarEventMapper {
                 .startTime(timeToString(calendarEvent.getStartTime()))
                 .endTime(timeToString(calendarEvent.getEndTime()))
                 .date(calendarEvent.getDate())
-                .memberId(calendarEvent.getMember().getId())
+                .memberId(singleMemberId(calendarEvent))
+                .audienceType(calendarEvent.getAudienceType())
+                .memberIds(memberIds(calendarEvent))
                 .isAllDay(calendarEvent.isAllDay())
                 .location(calendarEvent.getLocation())
                 .endDate(calendarEvent.getEndDate())
@@ -68,7 +77,9 @@ public class CalendarEventMapper {
                 .startTime(timeToString(parent.getStartTime()))
                 .endTime(timeToString(parent.getEndTime()))
                 .date(instanceDate)
-                .memberId(parent.getMember().getId())
+                .memberId(singleMemberId(parent))
+                .audienceType(parent.getAudienceType())
+                .memberIds(memberIds(parent))
                 .isAllDay(parent.isAllDay())
                 .location(parent.getLocation())
                 .endDate(null)
@@ -79,6 +90,16 @@ public class CalendarEventMapper {
                 .description(parent.getDescription())
                 .htmlLink(parent.getHtmlLink())
                 .build();
+    }
+
+    private static List<java.util.UUID> memberIds(CalendarEvent event) {
+        return event.getAudienceMembers().stream()
+                .map(FamilyMember::getId).sorted().toList();
+    }
+
+    private static java.util.UUID singleMemberId(CalendarEvent event) {
+        List<java.util.UUID> ids = memberIds(event);
+        return ids.size() == 1 ? ids.getFirst() : null;
     }
 
     private static String timeToString(LocalTime localTime) {

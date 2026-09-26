@@ -6,8 +6,11 @@ import com.familyhub.demo.exception.BadRequestException;
 import com.familyhub.demo.exception.ResourceNotFoundException;
 import com.familyhub.demo.model.Family;
 import com.familyhub.demo.model.FamilyMember;
+import com.familyhub.demo.model.CalendarEvent;
+import com.familyhub.demo.model.EventAudienceType;
 import com.familyhub.demo.repository.ChoreTemplateRepository;
 import com.familyhub.demo.repository.FamilyMemberRepository;
+import com.familyhub.demo.repository.CalendarEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +38,9 @@ class FamilyMemberServiceTest {
 
     @Mock
     private ChoreTemplateRepository choreTemplateRepository;
+
+    @Mock
+    private CalendarEventRepository calendarEventRepository;
 
     @InjectMocks
     private FamilyMemberService familyMemberService;
@@ -138,6 +144,46 @@ class FamilyMemberServiceTest {
         familyMemberService.deleteFamilyMember(family, MEMBER_ID);
 
         verify(familyMemberRepository).delete(member);
+    }
+
+    @Test
+    void deletingMemberKeepsSharedEventForRemainingPerson() {
+        FamilyMember another = createFamilyMember(family);
+        another.setId(UUID.randomUUID());
+        CalendarEvent shared = createCalendarEvent(family, member);
+        shared.getAudienceMembers().add(another);
+        when(familyMemberRepository.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        when(calendarEventRepository.findDistinctByAudienceMembersContaining(member)).thenReturn(List.of(shared));
+
+        familyMemberService.deleteFamilyMember(family, MEMBER_ID);
+
+        assertThat(shared.getAudienceMembers()).containsExactly(another);
+        verify(calendarEventRepository, org.mockito.Mockito.never()).delete(shared);
+    }
+
+    @Test
+    void deletingSoleAudienceMemberDeletesEventRatherThanMakingItFamily() {
+        CalendarEvent sole = createCalendarEvent(family, member);
+        when(familyMemberRepository.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+        when(calendarEventRepository.findDistinctByAudienceMembersContaining(member)).thenReturn(List.of(sole));
+
+        familyMemberService.deleteFamilyMember(family, MEMBER_ID);
+
+        verify(calendarEventRepository).delete(sole);
+        assertThat(sole.getAudienceType()).isEqualTo(EventAudienceType.MEMBERS);
+    }
+
+    @Test
+    void deletingMemberDoesNotDeleteFamilyEvent() {
+        CalendarEvent everyone = createCalendarEvent(family, member);
+        everyone.setAudienceType(EventAudienceType.FAMILY);
+        everyone.getAudienceMembers().clear();
+        when(familyMemberRepository.findById(MEMBER_ID)).thenReturn(Optional.of(member));
+
+        familyMemberService.deleteFamilyMember(family, MEMBER_ID);
+
+        verify(calendarEventRepository, org.mockito.Mockito.never()).delete(everyone);
+        assertThat(everyone.getAudienceType()).isEqualTo(EventAudienceType.FAMILY);
     }
 
     @Test

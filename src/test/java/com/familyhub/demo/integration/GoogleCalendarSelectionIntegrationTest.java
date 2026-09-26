@@ -126,7 +126,7 @@ class GoogleCalendarSelectionIntegrationTest {
         // 2. Insert a GOOGLE-sourced calendar event
         try (var conn = dataSource.getConnection();
              var stmt = conn.prepareStatement(
-                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, member_id, family_id, is_all_day, is_cancelled, source) " +
+                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, source_owner_member_id, family_id, is_all_day, is_cancelled, source) " +
                              "SELECT gen_random_uuid(), 'Google Event', '09:00', '10:00', '2025-06-15', " +
                              "fm.id, fm.family_id, false, false, 'GOOGLE' FROM family_member fm WHERE fm.id = ?::uuid")) {
             stmt.setString(1, memberId);
@@ -202,7 +202,7 @@ class GoogleCalendarSelectionIntegrationTest {
     private int countGoogleEvents() throws Exception {
         try (var conn = dataSource.getConnection();
              var stmt = conn.prepareStatement(
-                     "SELECT COUNT(*) FROM calendar_event WHERE member_id = ?::uuid AND source = 'GOOGLE'")) {
+                     "SELECT COUNT(*) FROM calendar_event WHERE source_owner_member_id = ?::uuid AND source = 'GOOGLE'")) {
             stmt.setString(1, memberId);
             ResultSet rs = stmt.executeQuery();
             rs.next();

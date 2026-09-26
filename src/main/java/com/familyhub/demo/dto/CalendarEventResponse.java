@@ -5,6 +5,8 @@ import lombok.Builder;
 
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.List;
+import com.familyhub.demo.model.EventAudienceType;
 
 @Builder
 public record CalendarEventResponse(
@@ -15,6 +17,8 @@ public record CalendarEventResponse(
         @JsonFormat(pattern = "yyyy-MM-dd")
         LocalDate date,
         UUID memberId,
+        EventAudienceType audienceType,
+        List<UUID> memberIds,
         boolean isAllDay,
         String location,
         @JsonFormat(pattern = "yyyy-MM-dd")

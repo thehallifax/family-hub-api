@@ -78,7 +78,7 @@ public final class TestDataFactory {
         event.setEndTime(LocalTime.of(10, 0));
         event.setDate(LocalDate.of(2025, 6, 15));
         event.setFamily(family);
-        event.setMember(member);
+        event.getAudienceMembers().add(member);
         event.setAllDay(false);
         event.setLocation("Test Location");
         return event;
@@ -162,7 +162,7 @@ public final class TestDataFactory {
         event.setEndTime(LocalTime.of(12, 0));
         event.setDate(LocalDate.of(2025, 6, 3));
         event.setFamily(family);
-        event.setMember(member);
+        event.getAudienceMembers().add(member);
         event.setAllDay(false);
         event.setLocation("School");
         event.setRecurrenceRule("FREQ=WEEKLY;BYDAY=TU,TH,FR");
@@ -178,7 +178,7 @@ public final class TestDataFactory {
         event.setDate(LocalDate.of(2025, 3, 7));
         event.setEndDate(LocalDate.of(2025, 3, 9));
         event.setFamily(family);
-        event.setMember(member);
+        event.getAudienceMembers().add(member);
         event.setAllDay(true);
         return event;
     }

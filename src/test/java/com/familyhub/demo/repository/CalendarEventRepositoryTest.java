@@ -58,7 +58,7 @@ class CalendarEventRepositoryTest {
     private CalendarEvent persistEvent(Family family, FamilyMember member, String title) {
         CalendarEvent event = new CalendarEvent();
         event.setFamily(family);
-        event.setMember(member);
+        event.getAudienceMembers().add(member);
         event.setTitle(title);
         event.setStartTime(LocalTime.of(9, 0));
         event.setEndTime(LocalTime.of(10, 0));

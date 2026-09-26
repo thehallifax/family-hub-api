@@ -17,7 +17,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface CalendarEventRepository extends JpaRepository<CalendarEvent, UUID> {
-    void deleteByMemberAndSource(FamilyMember member, EventSource source);
+    void deleteBySourceOwnerMemberAndSource(FamilyMember member, EventSource source);
+
+    List<CalendarEvent> findDistinctByAudienceMembersContaining(FamilyMember member);
 
     void deleteBySyncedCalendarAndSource(GoogleSyncedCalendar syncedCalendar, EventSource source);
 

@@ -75,7 +75,7 @@ class GoogleCalendarSyncIntegrationTest {
                                     "startTime": "2:00 PM",
                                     "endTime": "3:00 PM",
                                     "date": "2025-06-15",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false
                                 }
                                 """.formatted(memberId)))
@@ -170,7 +170,7 @@ class GoogleCalendarSyncIntegrationTest {
                                     "startTime": "2:00 PM",
                                     "endTime": "3:00 PM",
                                     "date": "2025-06-15",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false
                                 }
                                 """.formatted(memberId)))
@@ -206,7 +206,7 @@ class GoogleCalendarSyncIntegrationTest {
                                     "startTime": "2:00 PM",
                                     "endTime": "3:00 PM",
                                     "date": "2025-06-15",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false
                                 }
                                 """.formatted(memberId)))
@@ -324,7 +324,7 @@ class GoogleCalendarSyncIntegrationTest {
         String eventId = UUID.randomUUID().toString();
         try (var conn = dataSource.getConnection();
              var stmt = conn.prepareStatement(
-                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, member_id, family_id, " +
+                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, source_owner_member_id, family_id, " +
                              "is_all_day, is_cancelled, source, google_event_id, html_link, end_date, recurrence_rule, " +
                              "recurring_event_id, original_date) " +
                              "VALUES (?::uuid, ?, ?::time, ?::time, ?::date, ?::uuid, ?::uuid, ?, ?, 'GOOGLE', ?, ?, " +
@@ -346,6 +346,12 @@ class GoogleCalendarSyncIntegrationTest {
             stmt.setString(15, originalDate);
             stmt.executeUpdate();
         }
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.prepareStatement("INSERT INTO calendar_event_member (event_id, member_id) VALUES (?::uuid, ?::uuid)")) {
+            stmt.setString(1, eventId);
+            stmt.setString(2, memberId);
+            stmt.executeUpdate();
+        }
         return eventId;
     }
 
@@ -354,7 +360,7 @@ class GoogleCalendarSyncIntegrationTest {
                                         String originalDate, boolean isCancelled) throws Exception {
         try (var conn = dataSource.getConnection();
              var stmt = conn.prepareStatement(
-                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, member_id, family_id, " +
+                     "INSERT INTO calendar_event (id, title, start_time, end_time, date, source_owner_member_id, family_id, " +
                              "is_all_day, is_cancelled, source, google_event_id, recurring_event_id, original_date) " +
                              "VALUES (gen_random_uuid(), ?, ?::time, ?::time, ?::date, ?::uuid, ?::uuid, false, ?, 'GOOGLE', ?, ?::uuid, ?::date)")) {
             stmt.setString(1, title);

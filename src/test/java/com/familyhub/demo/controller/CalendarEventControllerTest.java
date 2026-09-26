@@ -72,7 +72,8 @@ class CalendarEventControllerTest {
                 "startTime": "9:00 AM",
                 "endTime": "10:00 AM",
                 "date": "2025-06-15",
-                "memberId": "00000000-0000-0000-0000-000000000002",
+                "audienceType": "MEMBERS",
+                "memberIds": ["00000000-0000-0000-0000-000000000002"],
                 "isAllDay": false,
                 "location": "Test Location"
             }
@@ -173,7 +174,7 @@ class CalendarEventControllerTest {
 
     @Test
     @WithMockFamily
-    void addEvent_nullMemberId_returns400WithFieldError() throws Exception {
+    void addEvent_missingAudience_returns400WithFieldError() throws Exception {
         mockMvc.perform(post("/api/calendar/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -185,7 +186,7 @@ class CalendarEventControllerTest {
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors[?(@.field == 'memberId')]").exists());
+                .andExpect(jsonPath("$.errors[?(@.field == 'audienceType')]").exists());
     }
 
     @Test

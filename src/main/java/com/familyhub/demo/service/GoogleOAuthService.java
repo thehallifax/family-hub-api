@@ -154,7 +154,7 @@ public class GoogleOAuthService {
             syncedCalendarRepository.deleteByMemberId(memberId);
 
             // Delete all Google-sourced calendar events for this member
-            calendarEventRepository.deleteByMemberAndSource(token.getMember(), EventSource.GOOGLE);
+            calendarEventRepository.deleteBySourceOwnerMemberAndSource(token.getMember(), EventSource.GOOGLE);
 
             tokenRepository.delete(token);
         });

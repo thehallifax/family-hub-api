@@ -71,7 +71,7 @@ class GoogleEventScopeMigrationTest {
             insertEvent(connection, legacyGoogle, family, member, null, "legacy-id", "GOOGLE");
         }
 
-        flyway(schema, "latest").migrate();
+        flyway(schema, "18").migrate();
         try (Connection connection = connect(schema); var statement = connection.createStatement()) {
             var rows = statement.executeQuery("SELECT count(*) FROM calendar_event WHERE id IN ('" + existingGoogle + "','" + nativeEvent + "','" + legacyGoogle + "')");
             rows.next();

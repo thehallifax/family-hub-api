@@ -123,7 +123,7 @@ class RecurrenceExpanderTest {
         edited.setDate(LocalDate.of(2025, 6, 2));
         edited.setOriginalDate(LocalDate.of(2025, 6, 2));
         edited.setRecurringEvent(parent);
-        edited.setMember(member);
+        edited.getAudienceMembers().add(member);
         edited.setFamily(family);
         edited.setCancelled(false);
 

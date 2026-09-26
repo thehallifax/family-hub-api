@@ -70,7 +70,10 @@ class GoogleEventMapperTest {
             assertThat(entity.getEtag()).isEqualTo("\"etag-value\"");
             assertThat(entity.getGoogleUpdatedAt()).isNotNull();
             assertThat(entity.getSource()).isEqualTo(EventSource.GOOGLE);
-            assertThat(entity.getMember()).isEqualTo(member);
+            assertThat(entity.getAudienceType()).isEqualTo(com.familyhub.demo.model.EventAudienceType.MEMBERS);
+            assertThat(entity.getAudienceMembers()).containsExactly(member);
+            assertThat(entity.getSourceOwnerMember()).isSameAs(member);
+            assertThat(entity.getSyncedCalendar()).isSameAs(syncedCal);
             assertThat(entity.getFamily()).isEqualTo(family);
             assertThat(entity.isAllDay()).isFalse();
             assertThat(entity.getDate()).isEqualTo(LocalDate.of(2025, 6, 15));

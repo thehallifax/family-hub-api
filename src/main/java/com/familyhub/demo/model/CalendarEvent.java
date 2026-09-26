@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Getter
@@ -31,9 +33,20 @@ public class CalendarEvent {
     @Column(nullable = false)
     private LocalDate date;
 
-    @ManyToOne
-    @JoinColumn(name = "member_id", nullable = false)
-    private FamilyMember member;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "audience_type", nullable = false)
+    private EventAudienceType audienceType = EventAudienceType.MEMBERS;
+
+    @ManyToMany
+    @JoinTable(name = "calendar_event_member",
+            joinColumns = @JoinColumn(name = "event_id"),
+            inverseJoinColumns = @JoinColumn(name = "member_id"))
+    @org.hibernate.annotations.BatchSize(size = 100)
+    private Set<FamilyMember> audienceMembers = new LinkedHashSet<>();
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_owner_member_id")
+    private FamilyMember sourceOwnerMember;
 
     @ManyToOne
     @JoinColumn(name = "family_id", nullable = false)

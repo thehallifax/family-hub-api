@@ -355,7 +355,7 @@ class CalendarEventServiceTest {
     }
 
     @Test
-    void getAllEventsByFamily_withDateRange_filtersMemberBeforeExpansion() {
+    void getAllEventsByFamily_withDateRange_filtersAfterExpansion() {
         FamilyMember otherMember = createFamilyMember(family);
         UUID otherMemberId = UUID.randomUUID();
         otherMember.setId(otherMemberId);
@@ -367,12 +367,14 @@ class CalendarEventServiceTest {
         when(calendarEventRepository.findRegularEventsByFamily(family)).thenReturn(List.of());
         when(calendarEventRepository.findRecurringParentsByFamily(eq(family), any()))
                 .thenReturn(List.of(parentForOther, parentForMember));
-        when(calendarEventRepository.findExceptionsByParentIds(List.of(parentForMember.getId())))
+        when(calendarEventRepository.findExceptionsByParentIds(List.of(parentForOther.getId(), parentForMember.getId())))
                 .thenReturn(List.of());
 
         CalendarEventResponse instance = CalendarEventResponse.builder()
                 .id(null).title("Preschool").startTime("9:00 AM").endTime("12:00 PM")
-                .date(LocalDate.of(2025, 6, 3)).memberId(MEMBER_ID).isRecurring(true)
+                .date(LocalDate.of(2025, 6, 3)).memberId(MEMBER_ID)
+                .audienceType(com.familyhub.demo.model.EventAudienceType.MEMBERS)
+                .memberIds(List.of(MEMBER_ID)).isRecurring(true)
                 .recurringEventId(parentForMember.getId()).build();
 
         when(recurrenceExpander.expand(eq(parentForMember), any(), any(), any()))
@@ -383,8 +385,8 @@ class CalendarEventServiceTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().memberId()).isEqualTo(MEMBER_ID);
-        // Should NOT have expanded parentForOther
-        verify(recurrenceExpander, never()).expand(eq(parentForOther), any(), any(), any());
+        // Every parent is expanded so an exception can have a different audience.
+        verify(recurrenceExpander).expand(eq(parentForOther), any(), any(), any());
     }
 
     @Test
@@ -493,7 +495,7 @@ class CalendarEventServiceTest {
         existingException.setRecurringEvent(parent);
         existingException.setOriginalDate(instanceDate);
         existingException.setFamily(family);
-        existingException.setMember(member);
+        existingException.getAudienceMembers().add(member);
         existingException.setTitle("Old Title");
         existingException.setStartTime(LocalTime.of(9, 0));
         existingException.setEndTime(LocalTime.of(12, 0));
@@ -587,7 +589,7 @@ class CalendarEventServiceTest {
         existingException.setRecurringEvent(parent);
         existingException.setOriginalDate(instanceDate);
         existingException.setFamily(family);
-        existingException.setMember(member);
+        existingException.getAudienceMembers().add(member);
         existingException.setTitle("Edited");
         existingException.setStartTime(LocalTime.of(10, 0));
         existingException.setEndTime(LocalTime.of(13, 0));

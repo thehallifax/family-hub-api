@@ -78,7 +78,7 @@ class GoogleCalendarSyncServiceTest {
         syncService.fullSync(syncedCal, calendarClient);
 
         verify(calendarEventRepository).deleteBySyncedCalendarAndSource(syncedCal, EventSource.GOOGLE);
-        verify(calendarEventRepository, never()).deleteByMemberAndSource(any(), any());
+        verify(calendarEventRepository, never()).deleteBySourceOwnerMemberAndSource(any(), any());
     }
 
     @Test
@@ -250,7 +250,8 @@ class GoogleCalendarSyncServiceTest {
         existing.setId(UUID.randomUUID());
         existing.setGoogleEventId("google-123");
         existing.setSource(EventSource.GOOGLE);
-        existing.setMember(member);
+        existing.getAudienceMembers().add(member);
+        existing.setSourceOwnerMember(member);
         existing.setFamily(family);
         existing.setSyncedCalendar(syncedCal);
         existing.setTitle("Old Title");
@@ -275,7 +276,7 @@ class GoogleCalendarSyncServiceTest {
         updated.setCancelled(true);
 
         UUID originalId = existing.getId();
-        FamilyMember originalMember = existing.getMember();
+        FamilyMember originalMember = existing.getSourceOwnerMember();
 
         syncService.updateExistingEvent(existing, updated);
 
@@ -299,7 +300,8 @@ class GoogleCalendarSyncServiceTest {
         assertThat(existing.getId()).isEqualTo(originalId);
         assertThat(existing.getGoogleEventId()).isEqualTo("google-123");
         assertThat(existing.getSource()).isEqualTo(EventSource.GOOGLE);
-        assertThat(existing.getMember()).isSameAs(originalMember);
+        assertThat(existing.getSourceOwnerMember()).isSameAs(originalMember);
+        assertThat(existing.getAudienceMembers()).containsExactly(member);
         assertThat(existing.getFamily()).isSameAs(family);
         assertThat(existing.getSyncedCalendar()).isSameAs(syncedCal);
     }

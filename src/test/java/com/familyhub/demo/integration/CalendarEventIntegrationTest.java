@@ -12,6 +12,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -62,11 +64,71 @@ class CalendarEventIntegrationTest {
                     "startTime": "9:00 AM",
                     "endTime": "10:00 AM",
                     "date": "2025-06-15",
-                    "memberId": "%s",
+                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                     "isAllDay": false,
                     "location": "Test Location"
                 }
                 """.formatted(memberId);
+    }
+
+    @Test
+    void familyAndMultiMemberEventsRoundTripWithoutDuplicateRows() throws Exception {
+        String familyBody = """
+                {"title":"Zoo Lightscape","startTime":"9:00 AM","endTime":"10:00 AM",
+                 "date":"2025-06-15","audienceType":"FAMILY","memberIds":[]}
+                """;
+        String familyResponse = mockMvc.perform(post("/api/calendar/events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(familyBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.audienceType").value("FAMILY"))
+                .andExpect(jsonPath("$.data.memberIds").isEmpty())
+                .andReturn().getResponse().getContentAsString();
+        String familyEventId = JsonPath.read(familyResponse, "$.data.id");
+
+        String second = java.util.UUID.randomUUID().toString();
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.prepareStatement("""
+                     INSERT INTO family_member (id,family_id,name,color)
+                     SELECT ?::uuid,family_id,'Second','TEAL' FROM family_member WHERE id=?::uuid
+                     """)) {
+            stmt.setString(1, second);
+            stmt.setString(2, memberId);
+            stmt.executeUpdate();
+        }
+        String sharedBody = """
+                {"title":"Dentist","startTime":"11:00 AM","endTime":"12:00 PM",
+                 "date":"2025-06-15","audienceType":"MEMBERS","memberIds":["%s","%s"]}
+                """.formatted(memberId, second);
+        String sharedResponse = mockMvc.perform(post("/api/calendar/events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(sharedBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.audienceType").value("MEMBERS"))
+                .andExpect(jsonPath("$.data.memberIds.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+        String sharedId = JsonPath.read(sharedResponse, "$.data.id");
+
+        for (String person : new String[]{memberId, second}) {
+            String listing = mockMvc.perform(get("/api/calendar/events")
+                            .header("Authorization", "Bearer " + token)
+                            .param("startDate", "2025-06-15").param("endDate", "2025-06-15")
+                            .param("memberId", person))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            java.util.List<String> ids = JsonPath.read(listing, "$.data[*].id");
+            assertThat(ids).containsExactlyInAnyOrder(familyEventId, sharedId);
+        }
+    }
+
+    @Test
+    void foreignFamilyAudienceCannotBeAssigned() throws Exception {
+        String other = registerAndExtract("other" + System.nanoTime());
+        String foreign = JsonPath.read(other, "$.data.family.members[0].id");
+        mockMvc.perform(post("/api/calendar/events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(eventJson(foreign)))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -117,7 +179,7 @@ class CalendarEventIntegrationTest {
                     "startTime": "12:00 AM",
                     "endTime": "12:00 AM",
                     "date": "2025-03-07",
-                    "memberId": "%s",
+                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                     "isAllDay": true,
                     "endDate": "2025-03-09"
                 }
@@ -167,7 +229,7 @@ class CalendarEventIntegrationTest {
                                     "startTime": "9:00 AM",
                                     "endTime": "10:00 AM",
                                     "date": "2025-03-07",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false,
                                     "endDate": "2025-03-09"
                                 }
@@ -186,7 +248,7 @@ class CalendarEventIntegrationTest {
                                     "startTime": "12:00 AM",
                                     "endTime": "12:00 AM",
                                     "date": "2025-03-09",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": true,
                                     "endDate": "2025-03-07"
                                 }
@@ -229,7 +291,7 @@ class CalendarEventIntegrationTest {
                                     "startTime": "9:00 AM",
                                     "endTime": "10:00 AM",
                                     "date": "2025-06-15",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false,
                                     "description": "This is a test description"
                                 }
@@ -258,7 +320,7 @@ class CalendarEventIntegrationTest {
                                     "startTime": "9:00 AM",
                                     "endTime": "10:00 AM",
                                     "date": "2025-06-15",
-                                    "memberId": "%s",
+                                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                                     "isAllDay": false,
                                     "description": "Updated description"
                                 }
@@ -292,8 +354,9 @@ class CalendarEventIntegrationTest {
 
         // Directly update source to GOOGLE via SQL
         try (var conn = dataSource.getConnection();
-             var stmt = conn.prepareStatement("UPDATE calendar_event SET source = 'GOOGLE' WHERE id = ?::uuid")) {
-            stmt.setString(1, eventId);
+             var stmt = conn.prepareStatement("UPDATE calendar_event SET source = 'GOOGLE', source_owner_member_id = ?::uuid WHERE id = ?::uuid")) {
+            stmt.setString(1, memberId);
+            stmt.setString(2, eventId);
             stmt.executeUpdate();
         }
 
@@ -328,8 +391,9 @@ class CalendarEventIntegrationTest {
 
         // Mark as GOOGLE source
         try (var conn = dataSource.getConnection();
-             var stmt = conn.prepareStatement("UPDATE calendar_event SET source = 'GOOGLE' WHERE id = ?::uuid")) {
-            stmt.setString(1, parentId);
+             var stmt = conn.prepareStatement("UPDATE calendar_event SET source = 'GOOGLE', source_owner_member_id = ?::uuid WHERE id = ?::uuid")) {
+            stmt.setString(1, memberId);
+            stmt.setString(2, parentId);
             stmt.executeUpdate();
         }
 
@@ -340,7 +404,7 @@ class CalendarEventIntegrationTest {
                     "startTime": "9:00 AM",
                     "endTime": "10:00 AM",
                     "date": "2025-06-05",
-                    "memberId": "%s",
+                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                     "isAllDay": false
                 }
                 """.formatted(memberId);
@@ -368,7 +432,7 @@ class CalendarEventIntegrationTest {
                     "startTime": "9:00 AM",
                     "endTime": "12:00 PM",
                     "date": "2025-06-03",
-                    "memberId": "%s",
+                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                     "isAllDay": false,
                     "location": "School",
                     "recurrenceRule": "FREQ=WEEKLY;BYDAY=TU,TH,FR"
@@ -409,7 +473,7 @@ class CalendarEventIntegrationTest {
                     "startTime": "9:00 AM",
                     "endTime": "1:00 PM",
                     "date": "2025-06-05",
-                    "memberId": "%s",
+                    "audienceType": "MEMBERS", "memberIds": ["%s"],
                     "isAllDay": false,
                     "location": "Zoo"
                 }

@@ -141,7 +141,7 @@ class GoogleOAuthServiceTest {
 
         verify(encryptionService).decrypt("encrypted-refresh");
         verify(syncedCalendarRepository).deleteByMemberId(memberId);
-        verify(calendarEventRepository).deleteByMemberAndSource(member, EventSource.GOOGLE);
+        verify(calendarEventRepository).deleteBySourceOwnerMemberAndSource(member, EventSource.GOOGLE);
         verify(tokenRepository).delete(token);
     }
 

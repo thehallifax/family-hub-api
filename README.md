@@ -43,7 +43,7 @@ Base path: `/api`. All routes require a `Bearer` JWT except `/api/health`, `/api
 | Google | `/api/google` | OAuth, calendar selection, sync |
 | Health | `/api/health` | liveness probe |
 
-The shared calendar contract is documented in [`calendar-events-api-reference.md`](https://github.com/joe-bor/family-hub/blob/main/docs/calendar-events-api-reference.md) in the workspace repo.
+The owned calendar audience contract and V21 migration are documented in [FamilyHub's calendar audience guide](https://github.com/thehallifax/FamilyHub/blob/main/docs/CALENDAR-AUDIENCE.md).
 
 ## Getting started
 

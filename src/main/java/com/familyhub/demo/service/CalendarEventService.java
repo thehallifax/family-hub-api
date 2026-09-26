@@ -9,6 +9,7 @@ import com.familyhub.demo.model.CalendarEvent;
 import com.familyhub.demo.model.EventSource;
 import com.familyhub.demo.model.Family;
 import com.familyhub.demo.model.FamilyMember;
+import com.familyhub.demo.model.EventAudienceType;
 import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.repository.FamilyMemberRepository;
 import net.fortuna.ical4j.model.Recur;
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.HashSet;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -64,9 +66,6 @@ public class CalendarEventService {
 
         // 1. Regular events (non-recurring, non-exception)
         Stream<CalendarEvent> regularStream = calendarEventRepository.findRegularEventsByFamily(family).stream();
-        if (memberId != null) {
-            regularStream = regularStream.filter(e -> e.getMember().getId().equals(memberId));
-        }
         // Filter regular events by date range overlap
         List<CalendarEventResponse> regularResponses = regularStream
                 .filter(event -> {
@@ -77,11 +76,8 @@ public class CalendarEventService {
                 .map(CalendarEventMapper::toDto)
                 .toList();
 
-        // 2. Recurring parents — filter by member before expansion
+        // Expand before filtering: an edited occurrence may have a different audience.
         List<CalendarEvent> parents = calendarEventRepository.findRecurringParentsByFamily(family, rangeEnd);
-        if (memberId != null) {
-            parents = parents.stream().filter(e -> e.getMember().getId().equals(memberId)).toList();
-        }
 
         List<CalendarEventResponse> expanded = new ArrayList<>(regularResponses);
 
@@ -111,6 +107,10 @@ public class CalendarEventService {
         }
 
         // 5. Sort by date then startTime
+        if (memberId != null) {
+            expanded.removeIf(event -> event.audienceType() != EventAudienceType.FAMILY
+                    && !event.memberIds().contains(memberId));
+        }
         expanded.sort(Comparator.comparing(CalendarEventResponse::date)
                 .thenComparing(r -> CalendarEventMapper.parseTime(r.startTime())));
 
@@ -126,20 +126,14 @@ public class CalendarEventService {
 
     @Transactional
     public CalendarEventResponse addCalendarEvent(CalendarEventRequest request, Family family) {
-        // Validate memberId passed belongs to logged in Family
-        FamilyMember familyMember = familyMemberRepository.findById(request.memberId())
-                .orElseThrow(() -> new ResourceNotFoundException("Family Member", request.memberId()));
-        if (!familyMember.getFamily().getId().equals(family.getId())) {
-            throw new AccessDeniedException("Access Denied -- CalendarEventService.addCalendarEvent()");
-        }
+        List<FamilyMember> members = resolveAudience(request, family);
 
         // We turn DTO to an Entity so we can save it in our DB
-        CalendarEvent calendarEvent = CalendarEventMapper.toEntity(request, family, familyMember);
+        CalendarEvent calendarEvent = CalendarEventMapper.toEntity(request, family, members);
         validateEvent(calendarEvent);
 
         CalendarEvent saved = calendarEventRepository.save(calendarEvent);
-        log.info("Calendar event created, eventId={}, familyId={}, memberId={}",
-                saved.getId(), family.getId(), familyMember.getId());
+        log.info("Calendar event created, eventId={}, familyId={}", saved.getId(), family.getId());
 
         return CalendarEventMapper.toDto(saved);
 
@@ -147,12 +141,7 @@ public class CalendarEventService {
 
     @Transactional
     public CalendarEventResponse updateCalendarEvent(CalendarEventRequest request, UUID eventId, Family family) {
-        // Validate memberId passed belongs to logged in Family
-        FamilyMember familyMember = familyMemberRepository.findById(request.memberId())
-                .orElseThrow(() -> new ResourceNotFoundException("Family Member", request.memberId()));
-        if (!familyMember.getFamily().getId().equals(family.getId())) {
-            throw new AccessDeniedException("Access Denied -- CalendarEventService.updateCalendarEvent()");
-        }
+        List<FamilyMember> members = resolveAudience(request, family);
 
         // Validate the resource belongs to current family
         CalendarEvent calendarEvent = calendarEventRepository.findByFamilyAndId(family, eventId)
@@ -160,7 +149,7 @@ public class CalendarEventService {
         rejectGoogleEvent(calendarEvent);
 
         // Map DTO to Entity to handle `string <-> date/time` conversions
-        CalendarEvent update = CalendarEventMapper.toEntity(request, family, familyMember);
+        CalendarEvent update = CalendarEventMapper.toEntity(request, family, members);
         validateEvent(update);
 
         // Apply changes
@@ -171,7 +160,9 @@ public class CalendarEventService {
         calendarEvent.setAllDay(update.isAllDay());
         calendarEvent.setLocation(update.getLocation());
         calendarEvent.setEndDate(update.getEndDate());
-        calendarEvent.setMember(update.getMember());
+        calendarEvent.setAudienceType(update.getAudienceType());
+        calendarEvent.getAudienceMembers().clear();
+        calendarEvent.getAudienceMembers().addAll(update.getAudienceMembers());
         calendarEvent.setRecurrenceRule(update.getRecurrenceRule());
         calendarEvent.setDescription(update.getDescription());
 
@@ -201,11 +192,7 @@ public class CalendarEventService {
         }
         validateInstanceDate(parent, date);
 
-        FamilyMember familyMember = familyMemberRepository.findById(request.memberId())
-                .orElseThrow(() -> new ResourceNotFoundException("Family Member", request.memberId()));
-        if (!familyMember.getFamily().getId().equals(family.getId())) {
-            throw new AccessDeniedException("Access Denied -- CalendarEventService.editRecurringInstance()");
-        }
+        List<FamilyMember> members = resolveAudience(request, family);
 
         // Find or create exception row
         CalendarEvent exception = calendarEventRepository.findByRecurringEventAndOriginalDate(parent, date)
@@ -218,7 +205,7 @@ public class CalendarEventService {
                 });
 
         // Apply edits from request
-        CalendarEvent update = CalendarEventMapper.toEntity(request, family, familyMember);
+        CalendarEvent update = CalendarEventMapper.toEntity(request, family, members);
         isEventTimeRangeValid(update);
         validateEndDate(update);
 
@@ -229,7 +216,9 @@ public class CalendarEventService {
         exception.setAllDay(update.isAllDay());
         exception.setLocation(update.getLocation());
         exception.setEndDate(update.getEndDate());
-        exception.setMember(update.getMember());
+        exception.setAudienceType(update.getAudienceType());
+        exception.getAudienceMembers().clear();
+        exception.getAudienceMembers().addAll(update.getAudienceMembers());
         exception.setCancelled(false);
         exception.setDescription(update.getDescription());
 
@@ -249,8 +238,7 @@ public class CalendarEventService {
         }
         validateInstanceDate(parent, date);
 
-        // No member validation needed — delete doesn't accept a memberId.
-        // The exception row uses parent.getMember() which is already family-owned.
+        // A cancellation row snapshots the parent's audience for data integrity.
         CalendarEvent exception = calendarEventRepository.findByRecurringEventAndOriginalDate(parent, date)
                 .orElseGet(() -> {
                     CalendarEvent ex = new CalendarEvent();
@@ -261,7 +249,8 @@ public class CalendarEventService {
                     ex.setStartTime(parent.getStartTime());
                     ex.setEndTime(parent.getEndTime());
                     ex.setDate(date);
-                    ex.setMember(parent.getMember());
+                    ex.setAudienceType(parent.getAudienceType());
+                    ex.getAudienceMembers().addAll(parent.getAudienceMembers());
                     return ex;
                 });
 
@@ -276,6 +265,30 @@ public class CalendarEventService {
         if (!dates.contains(date)) {
             throw new BadRequestException("Date %s is not an occurrence of this recurring event".formatted(date));
         }
+    }
+
+    private List<FamilyMember> resolveAudience(CalendarEventRequest request, Family family) {
+        if (request.audienceType() == null || request.memberIds() == null) {
+            throw new BadRequestException("Event audience is required");
+        }
+        if (request.audienceType() == EventAudienceType.FAMILY) {
+            if (!request.memberIds().isEmpty()) {
+                throw new BadRequestException("Family events cannot list members");
+            }
+            return List.of();
+        }
+        if (request.memberIds().isEmpty() || request.memberIds().stream().anyMatch(java.util.Objects::isNull)
+                || new HashSet<>(request.memberIds()).size() != request.memberIds().size()) {
+            throw new BadRequestException("Select one or more unique family members");
+        }
+        return request.memberIds().stream().map(id -> {
+            FamilyMember member = familyMemberRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Family Member", id));
+            if (!member.getFamily().getId().equals(family.getId())) {
+                throw new AccessDeniedException("Event audience member belongs to another family");
+            }
+            return member;
+        }).toList();
     }
 
     private void validateEvent(CalendarEvent event) {

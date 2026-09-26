@@ -52,6 +52,22 @@ class GoogleEventIsolationTest {
     }
 
     @Test
+    void importedGoogleEventHasConnectedMemberAudienceAndSeparateSourceOwner() {
+        GoogleSyncedCalendar calendar = calendar();
+        String id = "audience-" + UUID.randomUUID();
+        sync.persistIncrementalChanges(calendar, List.of(event(id, "Imported")));
+        var row = jdbc.queryForMap("""
+                SELECT e.audience_type, e.source_owner_member_id, em.member_id, e.synced_calendar_id
+                FROM calendar_event e JOIN calendar_event_member em ON em.event_id=e.id
+                WHERE e.google_event_id=? AND e.synced_calendar_id=?
+                """, id, calendar.getId());
+        assertThat(row.get("audience_type")).isEqualTo("MEMBERS");
+        assertThat(row.get("source_owner_member_id")).isEqualTo(calendar.getMember().getId());
+        assertThat(row.get("member_id")).isEqualTo(calendar.getMember().getId());
+        assertThat(row.get("synced_calendar_id")).isEqualTo(calendar.getId());
+    }
+
+    @Test
     void incrementalUpdateCannotModifyAnotherCalendarWithSameGoogleId() {
         GoogleSyncedCalendar a = calendar();
         GoogleSyncedCalendar b = calendar();
@@ -104,14 +120,16 @@ class GoogleEventIsolationTest {
         UUID nativeId = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO calendar_event
-                (id,title,start_time,end_time,date,member_id,family_id,source)
-                VALUES (?,'Native','09:00','10:00','2025-06-15',?,?,'NATIVE')
-                """, nativeId, a.getMember().getId(), a.getMember().getFamily().getId());
+                (id,title,start_time,end_time,date,family_id,source)
+                VALUES (?,'Native','09:00','10:00','2025-06-15',?,'NATIVE')
+                """, nativeId, a.getMember().getFamily().getId());
+        jdbc.update("INSERT INTO calendar_event_member (event_id,member_id) VALUES (?,?)",
+                nativeId, a.getMember().getId());
 
         oauth.disconnect(a.getMember().getId());
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE synced_calendar_id=? AND google_event_id=?", Integer.class, b.getId(), id)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE id=?", Integer.class, nativeId)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE member_id=? AND source='GOOGLE'", Integer.class, a.getMember().getId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE source_owner_member_id=? AND source='GOOGLE'", Integer.class, a.getMember().getId())).isZero();
     }
 }

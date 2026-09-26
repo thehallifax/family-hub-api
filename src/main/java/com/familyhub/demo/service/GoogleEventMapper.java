@@ -2,6 +2,7 @@ package com.familyhub.demo.service;
 
 import com.familyhub.demo.model.CalendarEvent;
 import com.familyhub.demo.model.EventSource;
+import com.familyhub.demo.model.EventAudienceType;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.google.api.client.util.DateTime;
 import com.google.api.services.calendar.model.Event;
@@ -84,7 +85,9 @@ public class GoogleEventMapper {
         entity.setGoogleEventId(googleEvent.getId());
         entity.setEtag(googleEvent.getEtag());
         entity.setSource(EventSource.GOOGLE);
-        entity.setMember(syncedCal.getMember());
+        entity.setAudienceType(EventAudienceType.MEMBERS);
+        entity.getAudienceMembers().add(syncedCal.getMember());
+        entity.setSourceOwnerMember(syncedCal.getMember());
         entity.setFamily(syncedCal.getMember().getFamily());
         entity.setSyncedCalendar(syncedCal);
 
