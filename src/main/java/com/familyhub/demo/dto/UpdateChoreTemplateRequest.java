@@ -23,10 +23,18 @@ public record UpdateChoreTemplateRequest(
 
         DayOfWeek dueWeekday,
 
-        Integer dueDayOfMonth
+        Integer dueDayOfMonth,
+
+        @JsonFormat(pattern = "yyyy-MM-dd")
+        LocalDate recurrenceAnchorDate
 ) {
     public UpdateChoreTemplateRequest(String title, UUID assignedToMemberId,
+                                      ChoreCadence cadence, LocalDate activeFrom, Boolean archived,
+                                      DayOfWeek dueWeekday, Integer dueDayOfMonth) {
+        this(title, assignedToMemberId, cadence, activeFrom, archived, dueWeekday, dueDayOfMonth, null);
+    }
+    public UpdateChoreTemplateRequest(String title, UUID assignedToMemberId,
                                       ChoreCadence cadence, LocalDate activeFrom, Boolean archived) {
-        this(title, assignedToMemberId, cadence, activeFrom, archived, null, null);
+        this(title, assignedToMemberId, cadence, activeFrom, archived, null, null, null);
     }
 }

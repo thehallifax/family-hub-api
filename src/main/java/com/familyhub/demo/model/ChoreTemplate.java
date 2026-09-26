@@ -51,6 +51,9 @@ public class ChoreTemplate {
     @Column(name = "due_day_of_month")
     private Integer dueDayOfMonth;
 
+    @Column(name = "recurrence_anchor_date")
+    private LocalDate recurrenceAnchorDate;
+
     @Column(nullable = false)
     private LocalDate activeFrom;
 

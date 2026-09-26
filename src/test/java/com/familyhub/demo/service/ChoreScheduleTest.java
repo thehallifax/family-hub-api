@@ -44,6 +44,7 @@ class ChoreScheduleTest {
         return switch (cadence) {
             case DAILY -> board.today().assignees().getFirst().chores().getFirst();
             case WEEKLY -> board.thisWeek().assignees().getFirst().chores().getFirst();
+            case FORTNIGHTLY -> board.thisWeek().assignees().getFirst().chores().getFirst();
             case MONTHLY -> board.thisMonth().assignees().getFirst().chores().getFirst();
         };
     }
