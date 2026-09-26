@@ -117,12 +117,18 @@ public class GoogleEventMapper {
             // Single-day: endDate stays null
         } else {
             // Timed event
-            // TODO: Events crossing midnight (e.g., 11 PM → 1 AM) will have endTime < startTime
-            // with no endDate set. This may confuse query/rendering. Rare edge case for Phase 1.
             entity.setAllDay(false);
             ZonedDateTime startZdt = toZonedDateTime(start.getDateTime());
-            ZonedDateTime endZdt = toZonedDateTime(end.getDateTime());
+            // Compare both instants in one calendar zone. Google may provide
+            // different UTC offsets at the two ends of a DST transition.
+            ZoneId eventZone = start.getTimeZone() == null
+                    ? startZdt.getZone() : ZoneId.of(start.getTimeZone());
+            startZdt = startZdt.withZoneSameInstant(eventZone);
+            ZonedDateTime endZdt = toZonedDateTime(end.getDateTime()).withZoneSameInstant(eventZone);
             entity.setDate(startZdt.toLocalDate());
+            if (endZdt.toLocalDate().isAfter(startZdt.toLocalDate())) {
+                entity.setEndDate(endZdt.toLocalDate());
+            }
             entity.setStartTime(startZdt.toLocalTime());
             entity.setEndTime(endZdt.toLocalTime());
         }

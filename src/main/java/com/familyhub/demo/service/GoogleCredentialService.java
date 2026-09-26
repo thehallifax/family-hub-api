@@ -76,6 +76,8 @@ public class GoogleCredentialService {
                     token.setTokenExpiry(Instant.ofEpochMilli(credential.getExpirationTimeMilliseconds()));
                     tokenRepository.save(token);
                     log.info("Refreshed access token for member {}", memberId);
+                } else {
+                    throw new BadRequestException("Google access has expired or been revoked; reconnect the account");
                 }
             } catch (IOException e) {
                 log.error("Failed to refresh token for member {}: {}", memberId, e.getMessage());

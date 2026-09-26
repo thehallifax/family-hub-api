@@ -1,6 +1,7 @@
 package com.familyhub.demo.service;
 
 import com.familyhub.demo.model.CalendarEvent;
+import com.familyhub.demo.dto.GoogleSyncResult;
 import com.familyhub.demo.model.EventSource;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.familyhub.demo.repository.CalendarEventRepository;
@@ -38,6 +39,7 @@ public class GoogleCalendarSyncService {
     private final GoogleSyncedCalendarRepository syncedCalendarRepository;
     private final GoogleEventMapper googleEventMapper;
     private final GoogleCredentialService credentialService;
+    private final GoogleSyncStatusTracker statusTracker;
 
     @Lazy
     @Autowired
@@ -50,14 +52,38 @@ public class GoogleCalendarSyncService {
 
     @Async
     public void syncMember(UUID memberId) {
-        log.info("Starting async sync for member {}", memberId);
-        List<GoogleSyncedCalendar> calendars = syncedCalendarRepository.findByMemberIdAndEnabledTrue(memberId);
+        syncMemberNow(memberId);
+    }
+
+    /** Runs to completion for manual requests; asynchronous callers use syncMember. */
+    public GoogleSyncResult syncMemberNow(UUID memberId) {
+        List<GoogleSyncedCalendar> calendars;
+        try {
+            calendars = syncedCalendarRepository.findByMemberIdAndEnabledTrue(memberId);
+        } catch (Exception e) {
+            log.error("Could not load selected Google calendars for member {}", memberId, e);
+            String issue = "Could not load selected calendars. Retry shortly.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, List.of(), issue);
+        }
         if (calendars.isEmpty()) {
-            log.info("No enabled calendars for member {}, skipping sync", memberId);
-            return;
+            String issue = "Choose at least one Google calendar before syncing.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, List.of(), issue);
         }
 
-        Calendar calendarClient = buildCalendarClient(memberId);
+        Calendar calendarClient;
+        try {
+            calendarClient = buildCalendarClient(memberId);
+        } catch (Exception e) {
+            log.error("Could not initialize Google sync for member {}", memberId, e);
+            String issue = "Google connection failed. Retry, or reconnect the account if access was revoked.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, calendars.stream().map(this::calendarLabel).toList(), issue);
+        }
+
+        int succeeded = 0;
+        List<String> failed = new ArrayList<>();
 
         // DD-1: Per-calendar isolation — each calendar syncs independently.
         // fullSync uses deleteBySyncedCalendarAndSource (per-calendar scope),
@@ -71,11 +97,21 @@ public class GoogleCalendarSyncService {
                 } else {
                     fullSync(cal, calendarClient);
                 }
+                succeeded++;
             } catch (Exception e) {
-                log.error("Sync failed for calendar {} (member {}): {}",
-                        cal.getGoogleCalendarId(), memberId, e.getMessage());
+                log.error("Sync failed for calendar {} (member {})", cal.getGoogleCalendarId(), memberId, e);
+                failed.add(calendarLabel(cal));
             }
         }
+        String issue = failed.isEmpty() ? null : "Could not sync " + String.join(", ", failed)
+                + ". Retry, or reconnect if access was revoked.";
+        statusTracker.record(memberId, issue);
+        return new GoogleSyncResult(succeeded, List.copyOf(failed),
+                issue == null ? "Google calendars synced successfully." : issue);
+    }
+
+    private String calendarLabel(GoogleSyncedCalendar cal) {
+        return cal.getCalendarName() == null ? cal.getGoogleCalendarId() : cal.getCalendarName();
     }
 
     private void incrementalSync(GoogleSyncedCalendar syncedCal, Calendar calendarClient) throws IOException {
@@ -129,11 +165,16 @@ public class GoogleCalendarSyncService {
      */
     @Transactional
     public void persistFullSync(GoogleSyncedCalendar syncedCal, List<Event> allEvents) {
-        calendarEventRepository.deleteBySyncedCalendarAndSource(syncedCal, EventSource.GOOGLE);
-        Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar = Map.of(syncedCal, allEvents);
+        GoogleSyncedCalendar current = syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()).orElse(null);
+        if (current == null || !current.isEnabled()) {
+            return; // Deselected or reconnected while Google was being fetched.
+        }
+        current.setSyncToken(syncedCal.getSyncToken());
+        calendarEventRepository.deleteBySyncedCalendarAndSource(current, EventSource.GOOGLE);
+        Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar = Map.of(current, allEvents);
         saveGoogleEvents(allEvents, eventsByCalendar);
-        syncedCal.setLastSyncedAt(Instant.now());
-        syncedCalendarRepository.save(syncedCal);
+        current.setLastSyncedAt(Instant.now());
+        syncedCalendarRepository.save(current);
     }
 
     /**
@@ -212,6 +253,11 @@ public class GoogleCalendarSyncService {
      */
     @Transactional
     public void persistIncrementalChanges(GoogleSyncedCalendar syncedCal, List<Event> changedEvents) {
+        GoogleSyncedCalendar current = syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()).orElse(null);
+        if (current == null || !current.isEnabled()) {
+            return; // Deselected or reconnected while Google was being fetched.
+        }
+        current.setSyncToken(syncedCal.getSyncToken());
         List<Event> parentChanges = changedEvents.stream()
                 .filter(e -> e.getRecurringEventId() == null)
                 .toList();
@@ -222,18 +268,18 @@ public class GoogleCalendarSyncService {
         for (Event event : parentChanges) {
             if ("cancelled".equals(event.getStatus())) {
                 calendarEventRepository.deleteBySyncedCalendarAndSourceAndGoogleEventId(
-                        syncedCal, EventSource.GOOGLE, event.getId());
+                        current, EventSource.GOOGLE, event.getId());
             } else {
-                upsertEvent(event, syncedCal);
+                upsertEvent(event, current);
             }
         }
 
         for (Event event : exceptionChanges) {
-            upsertException(event, syncedCal);
+            upsertException(event, current);
         }
 
-        syncedCal.setLastSyncedAt(Instant.now());
-        syncedCalendarRepository.save(syncedCal);
+        current.setLastSyncedAt(Instant.now());
+        syncedCalendarRepository.save(current);
     }
 
     private void upsertEvent(Event googleEvent, GoogleSyncedCalendar syncedCal) {

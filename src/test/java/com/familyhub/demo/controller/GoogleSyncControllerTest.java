@@ -1,6 +1,7 @@
 package com.familyhub.demo.controller;
 
 import com.familyhub.demo.config.SecurityConfig;
+import com.familyhub.demo.dto.GoogleSyncResult;
 import com.familyhub.demo.security.JwtAuthenticationEntryPoint;
 import com.familyhub.demo.security.JwtAuthenticationFilter;
 import com.familyhub.demo.security.WithMockFamily;
@@ -22,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -48,13 +50,16 @@ class GoogleSyncControllerTest {
 
     @Test
     @WithMockFamily
-    void syncMember_returns202() throws Exception {
+    void syncMember_returnsCompletedResult() throws Exception {
+        when(syncService.syncMemberNow(MEMBER_ID))
+                .thenReturn(new GoogleSyncResult(1, java.util.List.of(), "Google calendars synced successfully."));
         mockMvc.perform(post("/api/google/sync/{memberId}", MEMBER_ID))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.message").value("Sync started"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.succeeded").value(1))
+                .andExpect(jsonPath("$.data.failedCalendars").isEmpty());
 
         verify(familyMemberService).findById(any(), eq(MEMBER_ID));
-        verify(syncService).syncMember(MEMBER_ID);
+        verify(syncService).syncMemberNow(MEMBER_ID);
     }
 
     @Test

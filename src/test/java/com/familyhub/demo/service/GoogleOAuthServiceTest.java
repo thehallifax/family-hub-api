@@ -6,6 +6,7 @@ import com.familyhub.demo.exception.BadRequestException;
 import com.familyhub.demo.model.EventSource;
 import com.familyhub.demo.model.FamilyMember;
 import com.familyhub.demo.model.GoogleOAuthToken;
+import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.repository.FamilyMemberRepository;
 import com.familyhub.demo.repository.GoogleOAuthTokenRepository;
@@ -50,6 +51,9 @@ class GoogleOAuthServiceTest {
     @Mock
     private CalendarEventRepository calendarEventRepository;
 
+    @Mock
+    private GoogleSyncStatusTracker statusTracker;
+
     private GoogleOAuthConfig config;
     private GoogleOAuthService oauthService;
 
@@ -62,7 +66,7 @@ class GoogleOAuthServiceTest {
         config.setFrontendRedirectUrl("http://localhost:8080");
 
         oauthService = new GoogleOAuthService(config, tokenRepository, memberRepository, encryptionService, stateStore,
-                syncedCalendarRepository, calendarEventRepository, restClient);
+                syncedCalendarRepository, calendarEventRepository, statusTracker, restClient);
     }
 
     @Test
@@ -104,6 +108,25 @@ class GoogleOAuthServiceTest {
         config.setClientSecret("test-client-secret");
         config.setRedirectUri("not-a-url");
         assertThat(oauthService.getConnectionStatus(memberId).configured()).isFalse();
+    }
+
+    @Test
+    void connectionStatus_usesLatestSuccessfulEnabledCalendar() {
+        UUID memberId = UUID.randomUUID();
+        when(tokenRepository.findByMemberId(memberId)).thenReturn(Optional.of(new GoogleOAuthToken()));
+        GoogleSyncedCalendar old = new GoogleSyncedCalendar();
+        old.setEnabled(true);
+        old.setLastSyncedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        GoogleSyncedCalendar latest = new GoogleSyncedCalendar();
+        latest.setEnabled(true);
+        latest.setLastSyncedAt(java.time.Instant.parse("2026-01-03T00:00:00Z"));
+        GoogleSyncedCalendar disabled = new GoogleSyncedCalendar();
+        disabled.setEnabled(false);
+        disabled.setLastSyncedAt(java.time.Instant.parse("2026-01-04T00:00:00Z"));
+        when(syncedCalendarRepository.findByMemberId(memberId)).thenReturn(java.util.List.of(old, latest, disabled));
+
+        assertThat(oauthService.getConnectionStatus(memberId).lastSuccessfulSyncAt())
+                .isEqualTo(java.time.Instant.parse("2026-01-03T00:00:00Z"));
     }
 
     @Test
@@ -187,6 +210,40 @@ class GoogleOAuthServiceTest {
         assertThat(result.getAccessToken()).isEqualTo("enc-access-123");
         assertThat(result.getRefreshToken()).isEqualTo("enc-refresh-456");
         verify(tokenRepository).save(any(GoogleOAuthToken.class));
+    }
+
+    @Test
+    void reconnect_removesOnlyOwnersOldGoogleEventsBeforeTokenReplacement() {
+        UUID memberId = UUID.randomUUID();
+        FamilyMember member = new FamilyMember();
+        member.setId(memberId);
+        GoogleOAuthToken old = new GoogleOAuthToken();
+        old.setMember(member);
+        when(memberRepository.findById(memberId)).thenReturn(Optional.of(member));
+        when(tokenRepository.findByMemberId(memberId)).thenReturn(Optional.of(old));
+        when(encryptionService.encrypt(anyString())).thenAnswer(inv -> "enc-" + inv.getArgument(0));
+        when(tokenRepository.save(any(GoogleOAuthToken.class))).thenAnswer(inv -> inv.getArgument(0));
+        RestClient.RequestBodyUriSpec postSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        RestClient.ResponseSpec responseSpec = mock(RestClient.ResponseSpec.class);
+        when(restClient.post()).thenReturn(postSpec);
+        when(postSpec.uri(anyString())).thenReturn(bodySpec);
+        when(bodySpec.header(anyString(), anyString())).thenReturn(bodySpec);
+        when(bodySpec.body(anyString())).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(GoogleTokenResponse.class))
+                .thenReturn(new GoogleTokenResponse("new-access", "new-refresh", 3600, "read-only"));
+
+        oauthService.exchangeCodeForTokens("code", memberId);
+
+        var order = inOrder(calendarEventRepository, syncedCalendarRepository, tokenRepository);
+        order.verify(syncedCalendarRepository).findByMemberIdForUpdate(memberId);
+        order.verify(calendarEventRepository).deleteBySourceOwnerMemberAndSource(member, EventSource.GOOGLE);
+        order.verify(syncedCalendarRepository).deleteByMemberId(memberId);
+        order.verify(syncedCalendarRepository).flush();
+        order.verify(tokenRepository).delete(old);
+        order.verify(tokenRepository).flush();
+        order.verify(tokenRepository).save(any(GoogleOAuthToken.class));
     }
 
     @Test

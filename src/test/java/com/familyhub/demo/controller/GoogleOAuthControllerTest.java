@@ -93,7 +93,7 @@ class GoogleOAuthControllerTest {
     @WithMockFamily
     void getStatus_connected_returnsTrueWithCalendars() throws Exception {
         when(googleOAuthService.getConnectionStatus(MEMBER_ID))
-                .thenReturn(new GoogleConnectionStatus(true, true, List.of()));
+                .thenReturn(new GoogleConnectionStatus(true, true, List.of(), null, null, null));
 
         String response = mockMvc.perform(get("/api/google/status/{memberId}", MEMBER_ID))
                 .andExpect(status().isOk())
@@ -108,7 +108,7 @@ class GoogleOAuthControllerTest {
     @WithMockFamily
     void getStatus_disconnected_returnsFalseWithEmptyCalendars() throws Exception {
         when(googleOAuthService.getConnectionStatus(MEMBER_ID))
-                .thenReturn(new GoogleConnectionStatus(false, false, List.of()));
+                .thenReturn(new GoogleConnectionStatus(false, false, List.of(), null, null, null));
 
         mockMvc.perform(get("/api/google/status/{memberId}", MEMBER_ID))
                 .andExpect(status().isOk())

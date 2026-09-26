@@ -5,8 +5,10 @@ import com.familyhub.demo.dto.GoogleCalendarResponse;
 import com.familyhub.demo.event.SyncRequestedEvent;
 import com.familyhub.demo.exception.BadRequestException;
 import com.familyhub.demo.model.GoogleOAuthToken;
+import com.familyhub.demo.model.EventSource;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.familyhub.demo.repository.GoogleOAuthTokenRepository;
+import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.repository.GoogleSyncedCalendarRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -25,6 +27,7 @@ public class GoogleCalendarSelectionService {
     private final GoogleSyncedCalendarRepository syncedCalendarRepository;
     private final GoogleCalendarListService calendarListService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CalendarEventRepository calendarEventRepository;
 
     public List<GoogleCalendarResponse> listCalendarsWithSelections(UUID memberId) {
         tokenRepository.findByMemberId(memberId)
@@ -54,7 +57,7 @@ public class GoogleCalendarSelectionService {
 
         List<GoogleCalendarInfo> googleCalendars = calendarListService.listCalendars(memberId);
 
-        Map<String, GoogleSyncedCalendar> existingByGoogleId = syncedCalendarRepository.findByMemberId(memberId)
+        Map<String, GoogleSyncedCalendar> existingByGoogleId = syncedCalendarRepository.findByMemberIdForUpdate(memberId)
                 .stream()
                 .collect(Collectors.toMap(GoogleSyncedCalendar::getGoogleCalendarId, Function.identity()));
 
@@ -74,11 +77,18 @@ public class GoogleCalendarSelectionService {
                     newCal.setEnabled(true);
                     syncedCalendarRepository.save(newCal);
                 } else {
+                    if (!existing.isEnabled()) {
+                        // A disabled calendar has no imported rows; force a full import.
+                        existing.setSyncToken(null);
+                    }
                     existing.setEnabled(true);
                     existing.setCalendarName(cal.name());
                     syncedCalendarRepository.save(existing);
                 }
-            } else if (existing != null) {
+            } else if (existing != null && existing.isEnabled()) {
+                calendarEventRepository.deleteBySyncedCalendarAndSource(existing, EventSource.GOOGLE);
+                existing.setSyncToken(null);
+                existing.setLastSyncedAt(null);
                 existing.setEnabled(false);
                 syncedCalendarRepository.save(existing);
             }

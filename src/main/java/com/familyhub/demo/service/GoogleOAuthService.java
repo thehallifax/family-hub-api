@@ -21,7 +21,9 @@ import org.springframework.web.client.RestClient;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,6 +44,7 @@ public class GoogleOAuthService {
     private final OAuthStateStore stateStore;
     private final GoogleSyncedCalendarRepository syncedCalendarRepository;
     private final CalendarEventRepository calendarEventRepository;
+    private final GoogleSyncStatusTracker statusTracker;
     private final RestClient restClient;
 
     @Autowired
@@ -51,9 +54,10 @@ public class GoogleOAuthService {
                               TokenEncryptionService encryptionService,
                               OAuthStateStore stateStore,
                               GoogleSyncedCalendarRepository syncedCalendarRepository,
-                              CalendarEventRepository calendarEventRepository) {
+                              CalendarEventRepository calendarEventRepository,
+                              GoogleSyncStatusTracker statusTracker) {
         this(config, tokenRepository, memberRepository, encryptionService, stateStore,
-                syncedCalendarRepository, calendarEventRepository, RestClient.create());
+                syncedCalendarRepository, calendarEventRepository, statusTracker, RestClient.create());
     }
 
     public GoogleOAuthService(GoogleOAuthConfig config,
@@ -63,6 +67,7 @@ public class GoogleOAuthService {
                               OAuthStateStore stateStore,
                               GoogleSyncedCalendarRepository syncedCalendarRepository,
                               CalendarEventRepository calendarEventRepository,
+                              GoogleSyncStatusTracker statusTracker,
                               RestClient restClient) {
         this.config = config;
         this.tokenRepository = tokenRepository;
@@ -71,6 +76,7 @@ public class GoogleOAuthService {
         this.stateStore = stateStore;
         this.syncedCalendarRepository = syncedCalendarRepository;
         this.calendarEventRepository = calendarEventRepository;
+        this.statusTracker = statusTracker;
         this.restClient = restClient;
     }
 
@@ -117,12 +123,18 @@ public class GoogleOAuthService {
             throw new BadRequestException("Google did not return a refresh token");
         }
 
-        // Delete existing token if reconnecting (flush to avoid unique constraint violation)
+        // Reconnect replaces the source account. Remove old imported rows before its
+        // calendar rows disappear via token cascade/SET NULL, or they become orphans.
         tokenRepository.findByMemberId(memberId)
                 .ifPresent(existing -> {
+                    syncedCalendarRepository.findByMemberIdForUpdate(memberId);
+                    calendarEventRepository.deleteBySourceOwnerMemberAndSource(member, EventSource.GOOGLE);
+                    syncedCalendarRepository.deleteByMemberId(memberId);
+                    syncedCalendarRepository.flush();
                     tokenRepository.delete(existing);
                     tokenRepository.flush();
                 });
+        statusTracker.clear(memberId);
 
         GoogleOAuthToken token = new GoogleOAuthToken();
         token.setMember(member);
@@ -150,6 +162,7 @@ public class GoogleOAuthService {
                 log.warn("Failed to revoke Google token for member {}: {}", memberId, e.getMessage());
             }
 
+            syncedCalendarRepository.findByMemberIdForUpdate(memberId);
             // Delete synced calendar rows (CASCADE from token would handle this, but be explicit)
             syncedCalendarRepository.deleteByMemberId(memberId);
 
@@ -157,6 +170,7 @@ public class GoogleOAuthService {
             calendarEventRepository.deleteBySourceOwnerMemberAndSource(token.getMember(), EventSource.GOOGLE);
 
             tokenRepository.delete(token);
+            statusTracker.clear(memberId);
         });
     }
 
@@ -177,7 +191,17 @@ public class GoogleOAuthService {
                     .toList()
                 : List.of();
 
-        return new GoogleConnectionStatus(config.isConfigured(), connected, calendars);
+        GoogleSyncStatusTracker.Status syncStatus = connected ? statusTracker.get(memberId) : null;
+        Instant lastSuccessfulSyncAt = calendars.stream()
+                .filter(GoogleConnectionStatus.SyncedCalendarInfo::enabled)
+                .map(GoogleConnectionStatus.SyncedCalendarInfo::lastSyncedAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+        return new GoogleConnectionStatus(config.isConfigured(), connected, calendars,
+                lastSuccessfulSyncAt,
+                syncStatus == null ? null : syncStatus.lastAttemptAt(),
+                syncStatus == null ? null : syncStatus.issue());
     }
 
     private static String encode(String value) {

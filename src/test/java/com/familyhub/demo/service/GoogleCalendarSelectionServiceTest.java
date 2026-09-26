@@ -6,6 +6,8 @@ import com.familyhub.demo.exception.BadRequestException;
 import com.familyhub.demo.model.FamilyMember;
 import com.familyhub.demo.model.GoogleOAuthToken;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
+import com.familyhub.demo.model.EventSource;
+import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.repository.GoogleOAuthTokenRepository;
 import com.familyhub.demo.repository.GoogleSyncedCalendarRepository;
 import org.junit.jupiter.api.Test;
@@ -39,6 +41,9 @@ class GoogleCalendarSelectionServiceTest {
 
     @Mock
     private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    private CalendarEventRepository calendarEventRepository;
 
     @InjectMocks
     private GoogleCalendarSelectionService selectionService;
@@ -80,7 +85,7 @@ class GoogleCalendarSelectionServiceTest {
         when(calendarListService.listCalendars(MEMBER_ID)).thenReturn(List.of(
                 new GoogleCalendarInfo("primary", "Joe's Calendar", true)
         ));
-        when(syncedCalendarRepository.findByMemberId(MEMBER_ID)).thenReturn(List.of());
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID)).thenReturn(List.of());
 
         selectionService.updateCalendarSelections(MEMBER_ID, List.of("primary"));
 
@@ -112,7 +117,7 @@ class GoogleCalendarSelectionServiceTest {
         workCal.setGoogleCalendarId("work@group");
         workCal.setEnabled(true);
 
-        when(syncedCalendarRepository.findByMemberId(MEMBER_ID)).thenReturn(List.of(existing, workCal));
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID)).thenReturn(List.of(existing, workCal));
 
         // Only select "primary", deselect "work@group"
         List<GoogleCalendarResponse> result = selectionService.updateCalendarSelections(MEMBER_ID, List.of("primary"));
@@ -123,7 +128,28 @@ class GoogleCalendarSelectionServiceTest {
 
         // work@group should have been disabled
         assertThat(workCal.isEnabled()).isFalse();
+        verify(calendarEventRepository).deleteBySyncedCalendarAndSource(workCal, EventSource.GOOGLE);
         verify(syncedCalendarRepository, times(2)).save(any());
+    }
+
+    @Test
+    void reenablePreviouslyDisabledCalendarForcesFullImport() {
+        GoogleOAuthToken token = new GoogleOAuthToken();
+        token.setMember(new FamilyMember());
+        when(tokenRepository.findByMemberId(MEMBER_ID)).thenReturn(Optional.of(token));
+        when(calendarListService.listCalendars(MEMBER_ID))
+                .thenReturn(List.of(new GoogleCalendarInfo("primary", "Primary", true)));
+        GoogleSyncedCalendar stored = new GoogleSyncedCalendar();
+        stored.setGoogleCalendarId("primary");
+        stored.setEnabled(false);
+        stored.setSyncToken("old-token");
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID)).thenReturn(List.of(stored));
+
+        selectionService.updateCalendarSelections(MEMBER_ID, List.of("primary"));
+
+        assertThat(stored.isEnabled()).isTrue();
+        assertThat(stored.getSyncToken()).isNull();
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(any(), any());
     }
 
     @Test

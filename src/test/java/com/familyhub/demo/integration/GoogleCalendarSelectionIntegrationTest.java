@@ -2,6 +2,7 @@ package com.familyhub.demo.integration;
 
 import com.familyhub.demo.config.TestcontainersConfig;
 import com.familyhub.demo.service.TokenEncryptionService;
+import com.familyhub.demo.repository.GoogleSyncedCalendarRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.sql.ResultSet;
@@ -35,6 +38,12 @@ class GoogleCalendarSelectionIntegrationTest {
 
     @Autowired
     private TokenEncryptionService encryptionService;
+
+    @Autowired
+    private GoogleSyncedCalendarRepository syncedCalendarRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private String token;
     private String memberId;
@@ -116,6 +125,18 @@ class GoogleCalendarSelectionIntegrationTest {
             assertThat(rs.getString("google_calendar_id")).isEqualTo("work@group");
             assertThat(rs.getBoolean("enabled")).isFalse();
         }
+    }
+
+    @Test
+    void selectedCalendarLockQueriesWorkOnPostgres() throws Exception {
+        insertSyncedCalendar("primary", "Primary", true);
+        var selected = syncedCalendarRepository.findByMemberId(java.util.UUID.fromString(memberId)).getFirst();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            assertThat(syncedCalendarRepository.findByMemberIdForUpdate(java.util.UUID.fromString(memberId)))
+                    .hasSize(1);
+            assertThat(syncedCalendarRepository.findByIdForUpdate(selected.getId())).isPresent();
+        });
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.familyhub.demo.controller;
 
 import com.familyhub.demo.dto.ApiResponse;
+import com.familyhub.demo.dto.GoogleSyncResult;
 import com.familyhub.demo.model.Family;
 import com.familyhub.demo.service.FamilyMemberService;
 import com.familyhub.demo.service.GoogleCalendarSyncService;
@@ -21,12 +22,12 @@ public class GoogleSyncController {
     private final GoogleCalendarSyncService syncService;
 
     @PostMapping("/{memberId}")
-    public ResponseEntity<ApiResponse<Void>> syncMember(
+    public ResponseEntity<ApiResponse<GoogleSyncResult>> syncMember(
             @PathVariable UUID memberId,
             @AuthenticationPrincipal Family family) {
         familyMemberService.findById(family, memberId);
 
-        syncService.syncMember(memberId);
-        return ResponseEntity.accepted().body(new ApiResponse<>(null, "Sync started"));
+        GoogleSyncResult result = syncService.syncMemberNow(memberId);
+        return ResponseEntity.ok(new ApiResponse<>(result, result.message()));
     }
 }

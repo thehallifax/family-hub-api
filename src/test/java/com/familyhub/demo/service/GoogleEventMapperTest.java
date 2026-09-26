@@ -84,6 +84,36 @@ class GoogleEventMapperTest {
         }
 
         @Test
+        void timedEventCrossingMidnightRetainsEndDate() {
+            Event googleEvent = new Event().setId("overnight").setSummary("Night shift");
+            googleEvent.setStart(new EventDateTime().setDateTime(new DateTime("2025-06-15T23:00:00+08:00")));
+            googleEvent.setEnd(new EventDateTime().setDateTime(new DateTime("2025-06-16T01:00:00+08:00")));
+
+            CalendarEvent entity = mapper.toEntity(googleEvent, syncedCal);
+
+            assertThat(entity.getDate()).isEqualTo(LocalDate.of(2025, 6, 15));
+            assertThat(entity.getEndDate()).isEqualTo(LocalDate.of(2025, 6, 16));
+            assertThat(entity.getStartTime()).isEqualTo(LocalTime.of(23, 0));
+            assertThat(entity.getEndTime()).isEqualTo(LocalTime.of(1, 0));
+        }
+
+        @Test
+        void timedEventUsesOneZoneAcrossOffsetChange() {
+            Event googleEvent = new Event().setId("dst").setSummary("Overnight");
+            googleEvent.setStart(new EventDateTime()
+                    .setDateTime(new DateTime("2025-03-08T23:00:00-05:00"))
+                    .setTimeZone("America/New_York"));
+            googleEvent.setEnd(new EventDateTime()
+                    .setDateTime(new DateTime("2025-03-09T04:00:00-04:00")));
+
+            CalendarEvent entity = mapper.toEntity(googleEvent, syncedCal);
+
+            assertThat(entity.getDate()).isEqualTo(LocalDate.of(2025, 3, 8));
+            assertThat(entity.getEndDate()).isEqualTo(LocalDate.of(2025, 3, 9));
+            assertThat(entity.getEndTime()).isEqualTo(LocalTime.of(4, 0));
+        }
+
+        @Test
         void mapsAllDaySingleDayEvent() {
             Event googleEvent = new Event();
             googleEvent.setId("allday-123");

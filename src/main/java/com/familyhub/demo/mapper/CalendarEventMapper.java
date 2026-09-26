@@ -82,7 +82,8 @@ public class CalendarEventMapper {
                 .memberIds(memberIds(parent))
                 .isAllDay(parent.isAllDay())
                 .location(parent.getLocation())
-                .endDate(null)
+                .endDate(parent.getEndDate() == null ? null : instanceDate.plusDays(
+                        java.time.temporal.ChronoUnit.DAYS.between(parent.getDate(), parent.getEndDate())))
                 .recurrenceRule(parent.getRecurrenceRule())
                 .recurringEventId(parent.getId())
                 .isRecurring(true)

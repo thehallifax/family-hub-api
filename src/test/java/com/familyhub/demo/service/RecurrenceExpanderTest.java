@@ -80,6 +80,24 @@ class RecurrenceExpanderTest {
     }
 
     @Test
+    void overnightRecurringOccurrenceOverlapsFollowingDay() {
+        CalendarEvent parent = createRecurringCalendarEvent(family, member);
+        parent.setRecurrenceRule("FREQ=DAILY");
+        parent.setDate(LocalDate.of(2025, 6, 1));
+        parent.setEndDate(LocalDate.of(2025, 6, 2));
+        parent.setStartTime(LocalTime.of(23, 0));
+        parent.setEndTime(LocalTime.of(1, 0));
+
+        List<CalendarEventResponse> result = expander.expand(
+                parent, LocalDate.of(2025, 6, 2), LocalDate.of(2025, 6, 2), Map.of());
+
+        assertThat(result).extracting(CalendarEventResponse::date)
+                .containsExactly(LocalDate.of(2025, 6, 1), LocalDate.of(2025, 6, 2));
+        assertThat(result.getFirst().endDate()).isEqualTo(LocalDate.of(2025, 6, 2));
+        assertThat(result.getLast().endDate()).isEqualTo(LocalDate.of(2025, 6, 3));
+    }
+
+    @Test
     void cancelledDate_isSkipped() {
         CalendarEvent parent = createRecurringCalendarEvent(family, member);
         parent.setRecurrenceRule("FREQ=DAILY");

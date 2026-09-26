@@ -36,6 +36,8 @@ class GoogleCalendarSyncServiceTest {
     private GoogleEventMapper googleEventMapper;
     @Mock
     private GoogleCredentialService credentialService;
+    @Mock
+    private GoogleSyncStatusTracker statusTracker;
 
     @Spy
     @InjectMocks
@@ -66,6 +68,8 @@ class GoogleCalendarSyncServiceTest {
         syncedCal.setToken(token);
         syncedCal.setGoogleCalendarId("primary");
         syncedCal.setEnabled(true);
+        lenient().when(syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()))
+                .thenReturn(Optional.of(syncedCal));
     }
 
     @Test
@@ -79,6 +83,38 @@ class GoogleCalendarSyncServiceTest {
 
         verify(calendarEventRepository).deleteBySyncedCalendarAndSource(syncedCal, EventSource.GOOGLE);
         verify(calendarEventRepository, never()).deleteBySourceOwnerMemberAndSource(any(), any());
+    }
+
+    @Test
+    void fullSync_doesNotRestoreDeselectedCalendar() {
+        when(syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()))
+                .thenReturn(Optional.empty());
+
+        syncService.persistFullSync(syncedCal, java.util.List.of());
+
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(any(), any());
+        verify(calendarEventRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void fullSync_doesNotImportIntoDisabledCalendar() {
+        syncedCal.setEnabled(false);
+
+        syncService.persistFullSync(syncedCal, java.util.List.of());
+
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(any(), any());
+        verify(calendarEventRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void incrementalSync_doesNotRestoreDeselectedCalendar() {
+        when(syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()))
+                .thenReturn(Optional.empty());
+
+        syncService.persistIncrementalChanges(syncedCal, java.util.List.of());
+
+        verifyNoInteractions(calendarEventRepository);
+        verify(syncedCalendarRepository, never()).save(any());
     }
 
     @Test
@@ -191,9 +227,37 @@ class GoogleCalendarSyncServiceTest {
         when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
                 .thenReturn(java.util.List.of());
 
-        syncService.syncMember(member.getId());
+        var result = syncService.syncMemberNow(member.getId());
 
         verifyNoInteractions(credentialService);
+        assertThat(result.succeeded()).isZero();
+        verify(statusTracker).record(eq(member.getId()), contains("Choose at least one"));
+    }
+
+    @Test
+    void syncMember_reportsSelectionLookupFailure() {
+        when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        var result = syncService.syncMemberNow(member.getId());
+
+        assertThat(result.succeeded()).isZero();
+        assertThat(result.message()).contains("Retry shortly");
+        verify(statusTracker).record(eq(member.getId()), contains("Could not load"));
+    }
+
+    @Test
+    void syncMember_reportsClientFailureInsteadOfClaimingSuccess() {
+        when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
+                .thenReturn(java.util.List.of(syncedCal));
+        doThrow(new IllegalStateException("credential unavailable"))
+                .when(syncService).buildCalendarClient(member.getId());
+
+        var result = syncService.syncMemberNow(member.getId());
+
+        assertThat(result.succeeded()).isZero();
+        assertThat(result.failedCalendars()).containsExactly(syncedCal.getGoogleCalendarId());
+        verify(statusTracker).record(eq(member.getId()), contains("Google connection failed"));
     }
 
     @Test
@@ -516,8 +580,11 @@ class GoogleCalendarSyncServiceTest {
         doThrow(new RuntimeException("API error")).when(syncService).fullSync(cal1, calendarClient);
         doNothing().when(syncService).fullSync(cal2, calendarClient);
 
-        syncService.syncMember(member.getId());
+        var result = syncService.syncMemberNow(member.getId());
 
+        assertThat(result.succeeded()).isEqualTo(1);
+        assertThat(result.failedCalendars()).containsExactly("cal-1");
+        verify(statusTracker).record(eq(member.getId()), contains("Could not sync cal-1"));
         // cal2 should still have been synced despite cal1 failure
         verify(syncService).fullSync(cal2, calendarClient);
     }

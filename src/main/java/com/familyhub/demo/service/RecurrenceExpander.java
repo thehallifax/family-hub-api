@@ -25,7 +25,9 @@ public class RecurrenceExpander {
             Map<LocalDate, CalendarEvent> exceptions
     ) {
         Recur<LocalDate> recur = new Recur<>(parent.getRecurrenceRule());
-        List<LocalDate> dates = recur.getDates(parent.getDate(), rangeStart, rangeEnd);
+        long spanDays = parent.getEndDate() == null ? 0
+                : Math.max(0, java.time.temporal.ChronoUnit.DAYS.between(parent.getDate(), parent.getEndDate()));
+        List<LocalDate> dates = recur.getDates(parent.getDate(), rangeStart.minusDays(spanDays), rangeEnd);
 
         // Filter out EXDATE dates (excluded by the recurrence rule source, e.g., Google Calendar)
         Set<LocalDate> excludedDates = parseExdates(parent.getExdates());
@@ -41,13 +43,24 @@ public class RecurrenceExpander {
                     continue; // Skip cancelled instances
                 }
                 // Use edited exception data
-                results.add(CalendarEventMapper.toDto(exception));
+                CalendarEventResponse response = CalendarEventMapper.toDto(exception);
+                if (overlaps(response, rangeStart, rangeEnd)) {
+                    results.add(response);
+                }
             } else {
                 // Virtual instance from parent
-                results.add(CalendarEventMapper.toInstanceResponse(parent, date));
+                CalendarEventResponse response = CalendarEventMapper.toInstanceResponse(parent, date);
+                if (overlaps(response, rangeStart, rangeEnd)) {
+                    results.add(response);
+                }
             }
         }
         return results;
+    }
+
+    private boolean overlaps(CalendarEventResponse event, LocalDate rangeStart, LocalDate rangeEnd) {
+        LocalDate endDate = event.endDate() == null ? event.date() : event.endDate();
+        return !event.date().isAfter(rangeEnd) && !endDate.isBefore(rangeStart);
     }
 
     private Set<LocalDate> parseExdates(String exdates) {
