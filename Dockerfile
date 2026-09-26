@@ -21,6 +21,7 @@ FROM eclipse-temurin:21-jre@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29
 WORKDIR /app
 # create a system user with no shell
 RUN useradd -r -s /bin/false appuser
+RUN mkdir -p /app/media && chown appuser:appuser /app/media
 # from pom.xml :: <finalName>app</finalName>
 COPY --from=build /app/target/app.jar app.jar
 USER appuser

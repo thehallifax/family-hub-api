@@ -31,6 +31,9 @@ class FamilyServiceTest {
     @Mock
     private FamilyRepository familyRepository;
 
+    @Mock
+    private AppearanceMediaService appearanceMediaService;
+
     @InjectMocks
     private FamilyService familyService;
 
@@ -143,6 +146,7 @@ class FamilyServiceTest {
         familyService.deleteFamily(FAMILY_ID);
 
         verify(familyRepository).delete(family);
+        verify(appearanceMediaService).deleteFamilyAfterCommit(FAMILY_ID);
     }
 
     @Test

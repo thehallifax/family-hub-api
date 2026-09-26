@@ -17,6 +17,7 @@ import java.util.UUID;
 @Transactional(readOnly = true)
 public class FamilyService {
     private final FamilyRepository familyRepository;
+    private final AppearanceMediaService appearanceMediaService;
 
     @Transactional
     public FamilyResponse findFamilyResponse(UUID familyId) {
@@ -53,5 +54,7 @@ public class FamilyService {
     public void deleteFamily(UUID id) {
         Family toBeDeleted = findFamilyById(id);
         familyRepository.delete(toBeDeleted);
+        familyRepository.flush();
+        appearanceMediaService.deleteFamilyAfterCommit(id);
     }
 }
