@@ -30,4 +30,10 @@ public interface ChorePeriodCompletionRepository extends JpaRepository<ChorePeri
             LocalDate periodStartDate,
             LocalDate periodEndDate
     );
+
+    List<ChorePeriodCompletion> findByChoreTemplateIdIn(List<UUID> templateIds);
+
+    List<ChorePeriodCompletion> findByChoreTemplate(ChoreTemplate choreTemplate);
+
+    void deleteByChoreTemplate(ChoreTemplate choreTemplate);
 }

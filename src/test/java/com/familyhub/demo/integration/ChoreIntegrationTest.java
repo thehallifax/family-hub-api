@@ -223,6 +223,59 @@ class ChoreIntegrationTest {
 
     @Test
     @WithMockFamily
+    void oneOffRoundTripsPermanentCompletionAndCadenceConversion() throws Exception {
+        mockMvc.perform(post("/api/chores/templates")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Renew passport","assignedToMemberId":"00000000-0000-0000-0000-000000000002",
+                                 "cadence":"ONE_OFF","activeFrom":"2026-05-19"}
+                                """))
+                .andExpect(status().isBadRequest());
+
+        String location = mockMvc.perform(post("/api/chores/templates")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"Renew passport","assignedToMemberId":"00000000-0000-0000-0000-000000000002",
+                                 "cadence":"ONE_OFF","activeFrom":"2026-05-19","oneOffDueDate":"2026-05-20"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.oneOffDueDate").value("2026-05-20"))
+                .andReturn().getResponse().getHeader("Location");
+        String templateId = location.substring(location.lastIndexOf('/') + 1);
+
+        mockMvc.perform(get("/api/chores/board"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueDate").value("2026-05-20"))
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueState").value("UPCOMING"))
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].periodStartDate").value("2026-05-20"));
+
+        mockMvc.perform(put("/api/chores/templates/{id}/current-period-completion", templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"scope\":\"THIS_MONTH\",\"periodStartDate\":\"2026-05-20\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.dueState").value("COMPLETE"));
+
+        mockMvc.perform(patch("/api/chores/templates/{id}", templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cadence\":\"ONE_OFF\",\"oneOffDueDate\":\"2026-06-01\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/chores/board"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueDate").value("2026-06-01"))
+                .andExpect(jsonPath("$.data.thisMonth.assignees[0].chores[0].dueState").value("COMPLETE"));
+
+        mockMvc.perform(patch("/api/chores/templates/{id}", templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cadence\":\"WEEKLY\",\"dueWeekday\":\"TUESDAY\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.oneOffDueDate").isEmpty());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chore_period_completion WHERE chore_template_id = ?",
+                Integer.class, UUID.fromString(templateId))).isZero();
+    }
+
+    @Test
+    @WithMockFamily
     void activeFrom_afterCurrentPeriod_isExcludedFromBoard() throws Exception {
         mockMvc.perform(post("/api/chores/templates")
                         .contentType(MediaType.APPLICATION_JSON)

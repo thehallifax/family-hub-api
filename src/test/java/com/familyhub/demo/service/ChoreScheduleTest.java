@@ -46,6 +46,7 @@ class ChoreScheduleTest {
             case WEEKLY -> board.thisWeek().assignees().getFirst().chores().getFirst();
             case FORTNIGHTLY -> board.thisWeek().assignees().getFirst().chores().getFirst();
             case MONTHLY -> board.thisMonth().assignees().getFirst().chores().getFirst();
+            case ONE_OFF -> board.thisMonth().assignees().getFirst().chores().getFirst();
         };
     }
 

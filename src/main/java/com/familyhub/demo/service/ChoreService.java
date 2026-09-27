@@ -99,10 +99,12 @@ public class ChoreService {
         template.setAssignedToMember(assignedToMember);
         template.setTitle(request.title().trim());
         template.setCadence(request.cadence());
-        validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth(), request.recurrenceAnchorDate());
+        validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth(),
+                request.recurrenceAnchorDate(), request.oneOffDueDate());
         template.setDueWeekday(request.dueWeekday());
         template.setDueDayOfMonth(request.dueDayOfMonth());
         template.setRecurrenceAnchorDate(request.recurrenceAnchorDate());
+        template.setOneOffDueDate(request.oneOffDueDate());
         template.setActiveFrom(request.activeFrom());
 
         return toTemplateResponse(choreTemplateRepository.save(template));
@@ -125,13 +127,20 @@ public class ChoreService {
         if (request.cadence() != null) {
             // A cadence-bearing PATCH replaces the schedule. Legacy weekly/monthly
             // nulls still mean "any day"; fortnightly requires both schedule fields.
-            validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth(), request.recurrenceAnchorDate());
+            validateSchedule(request.cadence(), request.dueWeekday(), request.dueDayOfMonth(),
+                    request.recurrenceAnchorDate(), request.oneOffDueDate());
+            ChoreCadence previousCadence = template.getCadence();
+            if (previousCadence != request.cadence()
+                    && (previousCadence == ChoreCadence.ONE_OFF || request.cadence() == ChoreCadence.ONE_OFF)) {
+                chorePeriodCompletionRepository.deleteByChoreTemplate(template);
+            }
             template.setCadence(request.cadence());
             template.setDueWeekday(request.dueWeekday());
             template.setDueDayOfMonth(request.dueDayOfMonth());
             template.setRecurrenceAnchorDate(request.recurrenceAnchorDate());
+            template.setOneOffDueDate(request.oneOffDueDate());
         } else if (request.dueWeekday() != null || request.dueDayOfMonth() != null
-                || request.recurrenceAnchorDate() != null) {
+                || request.recurrenceAnchorDate() != null || request.oneOffDueDate() != null) {
             throw new BadRequestException("Include cadence when changing a chore schedule");
         }
         if (request.activeFrom() != null) {
@@ -155,13 +164,7 @@ public class ChoreService {
         ResolvedPeriod period = resolveCurrentPeriod(template, today);
         assertFreshPeriod(request, period);
 
-        ChorePeriodCompletion existingCompletion = chorePeriodCompletionRepository
-                .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
-                        template,
-                        period.periodStartDate(),
-                        period.periodEndDate()
-                )
-                .orElse(null);
+        ChorePeriodCompletion existingCompletion = findCompletion(template, period);
 
         if (existingCompletion != null) {
             return toCurrentPeriodStateResponse(template, period, existingCompletion, today);
@@ -176,13 +179,8 @@ public class ChoreService {
             );
             return toCurrentPeriodStateResponse(template, period, saved, today);
         } catch (DataIntegrityViolationException ex) {
-            ChorePeriodCompletion concurrentCompletion = chorePeriodCompletionRepository
-                    .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
-                            template,
-                            period.periodStartDate(),
-                            period.periodEndDate()
-                    )
-                    .orElseThrow(() -> ex);
+            ChorePeriodCompletion concurrentCompletion = findCompletion(template, period);
+            if (concurrentCompletion == null) throw ex;
             return toCurrentPeriodStateResponse(template, period, concurrentCompletion, today);
         }
     }
@@ -198,13 +196,17 @@ public class ChoreService {
         ResolvedPeriod period = resolveCurrentPeriod(template, today);
         assertFreshPeriod(request, period);
 
-        chorePeriodCompletionRepository
-                .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
-                        template,
-                        period.periodStartDate(),
-                        period.periodEndDate()
-                )
-                .ifPresent(chorePeriodCompletionRepository::delete);
+        if (template.getCadence() == ChoreCadence.ONE_OFF) {
+            chorePeriodCompletionRepository.deleteByChoreTemplate(template);
+        } else {
+            chorePeriodCompletionRepository
+                    .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
+                            template,
+                            period.periodStartDate(),
+                            period.periodEndDate()
+                    )
+                    .ifPresent(chorePeriodCompletionRepository::delete);
+        }
 
         return new ChoreCurrentPeriodStateResponse(
                 period.scope(),
@@ -267,7 +269,13 @@ public class ChoreService {
             return Map.of();
         }
 
-        Map<PeriodWindow, List<UUID>> idsByPeriod = templates.stream().collect(Collectors.groupingBy(
+        List<ChoreTemplate> oneOffTemplates = templates.stream()
+                .filter(template -> template.getCadence() == ChoreCadence.ONE_OFF)
+                .toList();
+        List<ChoreTemplate> recurringTemplates = templates.stream()
+                .filter(template -> template.getCadence() != ChoreCadence.ONE_OFF)
+                .toList();
+        Map<PeriodWindow, List<UUID>> idsByPeriod = recurringTemplates.stream().collect(Collectors.groupingBy(
                 template -> {
                     ResolvedPeriod period = resolveCurrentPeriod(template, today);
                     return new PeriodWindow(period.periodStartDate(), period.periodEndDate());
@@ -275,6 +283,12 @@ public class ChoreService {
                 Collectors.mapping(ChoreTemplate::getId, Collectors.toList())
         ));
         Map<UUID, ChorePeriodCompletion> result = new HashMap<>();
+        if (!oneOffTemplates.isEmpty()) {
+            List<UUID> oneOffIds = oneOffTemplates.stream().map(ChoreTemplate::getId).toList();
+            chorePeriodCompletionRepository.findByChoreTemplateIdIn(oneOffIds).forEach(completion ->
+                    result.merge(completion.getChoreTemplate().getId(), completion,
+                            (left, right) -> left.getCompletedAt().isAfter(right.getCompletedAt()) ? left : right));
+        }
         idsByPeriod.forEach((period, ids) ->
                 chorePeriodCompletionRepository.findByTemplateIdsAndPeriod(ids, period.start(), period.end())
                         .forEach(completion -> result.put(completion.getChoreTemplate().getId(), completion)));
@@ -326,6 +340,7 @@ public class ChoreService {
             case WEEKLY -> ChoreScope.THIS_WEEK;
             case FORTNIGHTLY -> ChoreScope.THIS_WEEK;
             case MONTHLY -> ChoreScope.THIS_MONTH;
+            case ONE_OFF -> ChoreScope.THIS_MONTH;
         };
     }
 
@@ -376,6 +391,11 @@ public class ChoreService {
                 LocalDate monthStart = today.withDayOfMonth(1);
                 yield new ResolvedPeriod(ChoreScope.THIS_MONTH, monthStart, today.withDayOfMonth(today.lengthOfMonth()));
             }
+            case ONE_OFF -> new ResolvedPeriod(
+                    ChoreScope.THIS_MONTH,
+                    template.getOneOffDueDate(),
+                    template.getOneOffDueDate()
+            );
         };
     }
 
@@ -411,7 +431,8 @@ public class ChoreService {
                                                LocalDate today) {
         LocalDate dueDate = effectiveDueDate(template, today);
         ResolvedPeriod period = resolveCurrentPeriod(template, today);
-        boolean completionAvailable = !today.isBefore(period.periodStartDate());
+        boolean completionAvailable = template.getCadence() == ChoreCadence.ONE_OFF
+                || !today.isBefore(period.periodStartDate());
         ChoreDueState dueState = completion != null ? ChoreDueState.COMPLETE
                 : dueDate == null ? ChoreDueState.UNSCHEDULED
                 : today.isBefore(dueDate) ? ChoreDueState.UPCOMING
@@ -428,8 +449,11 @@ public class ChoreService {
                 dueDate,
                 dueState,
                 template.getRecurrenceAnchorDate(),
-                template.getCadence() == ChoreCadence.FORTNIGHTLY ? period.periodStartDate() : null,
-                template.getCadence() == ChoreCadence.FORTNIGHTLY ? period.periodEndDate() : null,
+                template.getOneOffDueDate(),
+                template.getCadence() == ChoreCadence.FORTNIGHTLY
+                        || template.getCadence() == ChoreCadence.ONE_OFF ? period.periodStartDate() : null,
+                template.getCadence() == ChoreCadence.FORTNIGHTLY
+                        || template.getCadence() == ChoreCadence.ONE_OFF ? period.periodEndDate() : null,
                 completionAvailable
         );
     }
@@ -443,19 +467,25 @@ public class ChoreService {
             case FORTNIGHTLY -> resolveCurrentPeriod(template, today).periodStartDate().plusDays(7);
             case MONTHLY -> template.getDueDayOfMonth() == null ? null
                     : today.withDayOfMonth(Math.min(template.getDueDayOfMonth(), today.lengthOfMonth()));
+            case ONE_OFF -> template.getOneOffDueDate();
         };
     }
 
     private void validateSchedule(ChoreCadence cadence, DayOfWeek weekday, Integer dayOfMonth,
-                                  LocalDate anchor) {
+                                  LocalDate anchor, LocalDate oneOffDueDate) {
         if (dayOfMonth != null && (dayOfMonth < 1 || dayOfMonth > 31)) {
             throw new BadRequestException("Due day of month must be between 1 and 31");
         }
-        if ((cadence == ChoreCadence.DAILY && (weekday != null || dayOfMonth != null || anchor != null))
-                || (cadence == ChoreCadence.WEEKLY && (dayOfMonth != null || anchor != null))
+        if ((cadence == ChoreCadence.DAILY
+                    && (weekday != null || dayOfMonth != null || anchor != null || oneOffDueDate != null))
+                || (cadence == ChoreCadence.WEEKLY
+                    && (dayOfMonth != null || anchor != null || oneOffDueDate != null))
                 || (cadence == ChoreCadence.FORTNIGHTLY && (weekday == null || anchor == null
-                    || dayOfMonth != null || anchor.getDayOfWeek() != weekday))
-                || (cadence == ChoreCadence.MONTHLY && (weekday != null || anchor != null))) {
+                    || dayOfMonth != null || oneOffDueDate != null || anchor.getDayOfWeek() != weekday))
+                || (cadence == ChoreCadence.MONTHLY
+                    && (weekday != null || anchor != null || oneOffDueDate != null))
+                || (cadence == ChoreCadence.ONE_OFF
+                    && (weekday != null || dayOfMonth != null || anchor != null || oneOffDueDate == null))) {
             throw new BadRequestException("Schedule does not match chore cadence");
         }
     }
@@ -472,8 +502,21 @@ public class ChoreService {
                 template.getUpdatedAt(),
                 template.getDueWeekday(),
                 template.getDueDayOfMonth(),
-                template.getRecurrenceAnchorDate()
+                template.getRecurrenceAnchorDate(),
+                template.getOneOffDueDate()
         );
+    }
+
+    private ChorePeriodCompletion findCompletion(ChoreTemplate template, ResolvedPeriod period) {
+        if (template.getCadence() == ChoreCadence.ONE_OFF) {
+            return chorePeriodCompletionRepository.findByChoreTemplate(template).stream()
+                    .max(Comparator.comparing(ChorePeriodCompletion::getCompletedAt))
+                    .orElse(null);
+        }
+        return chorePeriodCompletionRepository
+                .findByChoreTemplateAndPeriodStartDateAndPeriodEndDate(
+                        template, period.periodStartDate(), period.periodEndDate())
+                .orElse(null);
     }
 
     private record ResolvedPeriod(

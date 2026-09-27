@@ -30,15 +30,26 @@ public record CreateChoreTemplateRequest(
         Integer dueDayOfMonth,
 
         @JsonFormat(pattern = "yyyy-MM-dd")
-        LocalDate recurrenceAnchorDate
+        LocalDate recurrenceAnchorDate,
+
+        @JsonFormat(pattern = "yyyy-MM-dd")
+        LocalDate oneOffDueDate
 ) {
     public CreateChoreTemplateRequest(String title, UUID assignedToMemberId,
                                       ChoreCadence cadence, LocalDate activeFrom,
                                       DayOfWeek dueWeekday, Integer dueDayOfMonth) {
-        this(title, assignedToMemberId, cadence, activeFrom, dueWeekday, dueDayOfMonth, null);
+        this(title, assignedToMemberId, cadence, activeFrom, dueWeekday, dueDayOfMonth, null, null);
     }
     public CreateChoreTemplateRequest(String title, UUID assignedToMemberId,
                                       ChoreCadence cadence, LocalDate activeFrom) {
-        this(title, assignedToMemberId, cadence, activeFrom, null, null, null);
+        this(title, assignedToMemberId, cadence, activeFrom, null, null, null, null);
+    }
+
+    public CreateChoreTemplateRequest(String title, UUID assignedToMemberId,
+                                      ChoreCadence cadence, LocalDate activeFrom,
+                                      DayOfWeek dueWeekday, Integer dueDayOfMonth,
+                                      LocalDate recurrenceAnchorDate) {
+        this(title, assignedToMemberId, cadence, activeFrom, dueWeekday, dueDayOfMonth,
+                recurrenceAnchorDate, null);
     }
 }

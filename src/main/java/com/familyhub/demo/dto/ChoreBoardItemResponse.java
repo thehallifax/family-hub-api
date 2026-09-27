@@ -19,6 +19,7 @@ public record ChoreBoardItemResponse(
         LocalDate dueDate,
         ChoreDueState dueState,
         LocalDate recurrenceAnchorDate,
+        LocalDate oneOffDueDate,
         LocalDate periodStartDate,
         LocalDate periodEndDate,
         boolean completionAvailable
@@ -28,7 +29,7 @@ public record ChoreBoardItemResponse(
                                   DayOfWeek dueWeekday, Integer dueDayOfMonth, LocalDate dueDate,
                                   ChoreDueState dueState) {
         this(templateId, title, cadence, assignedToMemberId, completed, completedAt,
-                dueWeekday, dueDayOfMonth, dueDate, dueState, null, null, null, true);
+                dueWeekday, dueDayOfMonth, dueDate, dueState, null, null, null, null, true);
     }
     public ChoreBoardItemResponse(UUID templateId, String title, ChoreCadence cadence,
                                   UUID assignedToMemberId, boolean completed, LocalDateTime completedAt) {

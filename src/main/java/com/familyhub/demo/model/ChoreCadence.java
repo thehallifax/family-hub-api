@@ -4,5 +4,6 @@ public enum ChoreCadence {
     DAILY,
     WEEKLY,
     FORTNIGHTLY,
-    MONTHLY
+    MONTHLY,
+    ONE_OFF
 }
