@@ -88,6 +88,8 @@ class GoogleOAuthServiceTest {
         assertThat(url).contains("scope=");
         assertThat(url).contains("calendar.events.readonly");
         assertThat(url).contains("calendar.calendarlist.readonly");
+        assertThat(java.net.URLDecoder.decode(url, java.nio.charset.StandardCharsets.UTF_8))
+                .contains(GoogleOAuthService.EVENT_WRITE_SCOPE);
     }
 
     @Test
@@ -108,6 +110,18 @@ class GoogleOAuthServiceTest {
         config.setClientSecret("test-client-secret");
         config.setRedirectUri("not-a-url");
         assertThat(oauthService.getConnectionStatus(memberId).configured()).isFalse();
+    }
+
+    @Test
+    void writeScopeIsExactAndOldConnectionsReportReconsentNeeded() {
+        UUID memberId = UUID.randomUUID();
+        GoogleOAuthToken token = new GoogleOAuthToken();
+        token.setScope("https://www.googleapis.com/auth/calendar.events.readonly " +
+                "https://www.googleapis.com/auth/calendar.calendarlist.readonly");
+        when(tokenRepository.findByMemberId(memberId)).thenReturn(Optional.of(token));
+        assertThat(oauthService.getConnectionStatus(memberId).writeAuthorized()).isFalse();
+        token.setScope(token.getScope() + " " + GoogleOAuthService.EVENT_WRITE_SCOPE);
+        assertThat(oauthService.getConnectionStatus(memberId).writeAuthorized()).isTrue();
     }
 
     @Test

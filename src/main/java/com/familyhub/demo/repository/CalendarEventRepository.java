@@ -23,8 +23,22 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEvent, UU
 
     void deleteBySyncedCalendarAndSource(GoogleSyncedCalendar syncedCalendar, EventSource source);
 
+    List<CalendarEvent> findBySyncedCalendarAndSource(GoogleSyncedCalendar syncedCalendar, EventSource source);
+
     List<CalendarEvent> findByFamily(Family family);
     Optional<CalendarEvent> findByFamilyAndId(Family family, UUID uuid);
+
+    @Query("""
+            SELECT e FROM CalendarEvent e
+            JOIN FETCH e.syncedCalendar c
+            JOIN FETCH c.member cm
+            JOIN FETCH cm.family
+            JOIN FETCH c.token
+            JOIN FETCH e.sourceOwnerMember
+            WHERE e.family = :family AND e.id = :id
+              AND e.source = com.familyhub.demo.model.EventSource.GOOGLE
+            """)
+    Optional<CalendarEvent> findGoogleEventForWrite(@Param("family") Family family, @Param("id") UUID id);
 
     @Query("SELECT e FROM CalendarEvent e WHERE e.family = :family " +
             "AND e.recurrenceRule IS NULL " +

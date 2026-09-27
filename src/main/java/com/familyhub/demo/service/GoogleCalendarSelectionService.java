@@ -43,7 +43,8 @@ public class GoogleCalendarSelectionService {
                 .map(cal -> {
                     GoogleSyncedCalendar stored = storedByGoogleId.get(cal.id());
                     boolean enabled = stored != null && stored.isEnabled();
-                    return new GoogleCalendarResponse(cal.id(), cal.name(), cal.primary(), enabled);
+                    return new GoogleCalendarResponse(cal.id(), cal.name(), cal.primary(), enabled,
+                            cal.accessRole(), cal.writable());
                 })
                 .toList();
     }
@@ -100,7 +101,8 @@ public class GoogleCalendarSelectionService {
                 disableCalendar(existing);
             }
 
-            response.add(new GoogleCalendarResponse(cal.id(), cal.name(), cal.primary(), shouldEnable));
+            response.add(new GoogleCalendarResponse(cal.id(), cal.name(), cal.primary(), shouldEnable,
+                    cal.accessRole(), cal.writable()));
         }
 
         // A removed subscription is not in the discovery response, so it cannot be

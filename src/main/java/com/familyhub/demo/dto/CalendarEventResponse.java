@@ -27,6 +27,8 @@ public record CalendarEventResponse(
         UUID recurringEventId,
         boolean isRecurring,
         String source,
+        UUID sourceOwnerMemberId,
+        UUID syncedCalendarId,
         String description,
         String htmlLink
 ) {

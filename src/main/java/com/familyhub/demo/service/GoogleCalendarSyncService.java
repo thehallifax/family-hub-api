@@ -3,6 +3,8 @@ package com.familyhub.demo.service;
 import com.familyhub.demo.model.CalendarEvent;
 import com.familyhub.demo.dto.GoogleSyncResult;
 import com.familyhub.demo.model.EventSource;
+import com.familyhub.demo.model.EventAudienceType;
+import com.familyhub.demo.model.FamilyMember;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.repository.GoogleSyncedCalendarRepository;
@@ -25,6 +27,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -209,12 +212,20 @@ public class GoogleCalendarSyncService {
             return; // Deselected or reconnected while Google was being fetched.
         }
         current.setSyncToken(syncedCal.getSyncToken());
+        // Audience is FamilyHub-only metadata: keep it for identities that survive
+        // this authoritative replacement. Scope the snapshot to this calendar.
+        Map<String, AudienceSnapshot> audiences = calendarEventRepository
+                .findBySyncedCalendarAndSource(current, EventSource.GOOGLE).stream()
+                .filter(event -> event.getGoogleEventId() != null)
+                .collect(Collectors.toMap(CalendarEvent::getGoogleEventId,
+                        event -> new AudienceSnapshot(event.getAudienceType(),
+                                new LinkedHashSet<>(event.getAudienceMembers()))));
         calendarEventRepository.deleteBySyncedCalendarAndSource(current, EventSource.GOOGLE);
         // The same Google event IDs may be reinserted below. Execute deletes first
         // so the per-calendar unique constraint cannot see stale rows.
         calendarEventRepository.flush();
         Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar = Map.of(current, allEvents);
-        saveGoogleEvents(allEvents, eventsByCalendar);
+        saveGoogleEvents(allEvents, eventsByCalendar, audiences);
         current.setLastSyncedAt(Instant.now());
         syncedCalendarRepository.save(current);
     }
@@ -223,8 +234,17 @@ public class GoogleCalendarSyncService {
      * Saves Google events: parents/regular first (flush), then exceptions.
      * Cancelled non-recurring events and orphaned exceptions are skipped.
      */
+    private record AudienceSnapshot(EventAudienceType type, LinkedHashSet<FamilyMember> members) {
+        void apply(CalendarEvent event) {
+            event.setAudienceType(type);
+            event.getAudienceMembers().clear();
+            event.getAudienceMembers().addAll(members);
+        }
+    }
+
     private void saveGoogleEvents(List<Event> allEvents,
-                                   Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar) {
+                                   Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar,
+                                   Map<String, AudienceSnapshot> audiences) {
         List<Event> parentsAndRegular = allEvents.stream()
                 .filter(e -> e.getRecurringEventId() == null)
                 .filter(e -> !"cancelled".equals(e.getStatus()))
@@ -237,7 +257,10 @@ public class GoogleCalendarSyncService {
         List<CalendarEvent> parentEntities = new ArrayList<>();
         for (Event event : parentsAndRegular) {
             GoogleSyncedCalendar syncedCal = resolveCalendar(event, eventsByCalendar);
-            parentEntities.add(googleEventMapper.toEntity(event, syncedCal));
+            CalendarEvent entity = googleEventMapper.toEntity(event, syncedCal);
+            AudienceSnapshot previous = audiences.get(event.getId());
+            if (previous != null) previous.apply(entity);
+            parentEntities.add(entity);
         }
         calendarEventRepository.saveAll(parentEntities);
         calendarEventRepository.flush();
@@ -256,6 +279,8 @@ public class GoogleCalendarSyncService {
 
             CalendarEvent exceptionEntity = googleEventMapper.toExceptionEntity(
                     exception, syncedCal, parentEntity.get());
+            AudienceSnapshot previous = audiences.get(exception.getId());
+            if (previous != null) previous.apply(exceptionEntity);
             calendarEventRepository.save(exceptionEntity);
         }
     }

@@ -65,6 +65,8 @@ public class CalendarEventMapper {
                 .isRecurring(calendarEvent.getRecurrenceRule() != null
                         || calendarEvent.getRecurringEvent() != null)
                 .source(calendarEvent.getSource().name())
+                .sourceOwnerMemberId(calendarEvent.getSourceOwnerMember() == null ? null : calendarEvent.getSourceOwnerMember().getId())
+                .syncedCalendarId(calendarEvent.getSyncedCalendar() == null ? null : calendarEvent.getSyncedCalendar().getId())
                 .description(calendarEvent.getDescription())
                 .htmlLink(calendarEvent.getHtmlLink())
                 .build();
@@ -88,6 +90,8 @@ public class CalendarEventMapper {
                 .recurringEventId(parent.getId())
                 .isRecurring(true)
                 .source(parent.getSource().name())
+                .sourceOwnerMemberId(parent.getSourceOwnerMember() == null ? null : parent.getSourceOwnerMember().getId())
+                .syncedCalendarId(parent.getSyncedCalendar() == null ? null : parent.getSyncedCalendar().getId())
                 .description(parent.getDescription())
                 .htmlLink(parent.getHtmlLink())
                 .build();

@@ -31,11 +31,13 @@ import java.util.UUID;
 @Service
 @Transactional(readOnly = true)
 public class GoogleOAuthService {
+    public static final String EVENT_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
     private static final String AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
     private static final String TOKEN_URL = "https://oauth2.googleapis.com/token";
     private static final String REVOKE_URL = "https://oauth2.googleapis.com/revoke";
     private static final String SCOPES = "https://www.googleapis.com/auth/calendar.events.readonly " +
-            "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+            "https://www.googleapis.com/auth/calendar.calendarlist.readonly " +
+            "https://www.googleapis.com/auth/calendar.events";
 
     private final GoogleOAuthConfig config;
     private final GoogleOAuthTokenRepository tokenRepository;
@@ -179,7 +181,8 @@ public class GoogleOAuthService {
     }
 
     public GoogleConnectionStatus getConnectionStatus(UUID memberId) {
-        boolean connected = isConnected(memberId);
+        Optional<GoogleOAuthToken> connection = tokenRepository.findByMemberId(memberId);
+        boolean connected = connection.isPresent();
 
         List<GoogleConnectionStatus.SyncedCalendarInfo> calendars = connected
                 ? syncedCalendarRepository.findByMemberId(memberId).stream()
@@ -201,7 +204,12 @@ public class GoogleOAuthService {
         return new GoogleConnectionStatus(config.isConfigured(), connected, calendars,
                 lastSuccessfulSyncAt,
                 syncStatus == null ? null : syncStatus.lastAttemptAt(),
-                syncStatus == null ? null : syncStatus.issue());
+                syncStatus == null ? null : syncStatus.issue(),
+                connection.map(token -> hasWriteScope(token.getScope())).orElse(false));
+    }
+
+    public static boolean hasWriteScope(String grantedScopes) {
+        return grantedScopes != null && java.util.Arrays.asList(grantedScopes.split("\\s+")).contains(EVENT_WRITE_SCOPE);
     }
 
     private static String encode(String value) {

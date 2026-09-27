@@ -57,7 +57,8 @@ public class GoogleCalendarListService {
         return new GoogleCalendarInfo(
                 entry.getId(),
                 entry.getSummary(),
-                Boolean.TRUE.equals(entry.getPrimary())
+                Boolean.TRUE.equals(entry.getPrimary()),
+                entry.getAccessRole()
         );
     }
 }

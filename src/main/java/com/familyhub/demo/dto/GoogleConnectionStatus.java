@@ -9,8 +9,13 @@ public record GoogleConnectionStatus(
         List<SyncedCalendarInfo> calendars,
         Instant lastSuccessfulSyncAt,
         Instant lastAttemptAt,
-        String syncIssue
+        String syncIssue,
+        boolean writeAuthorized
 ) {
+    public GoogleConnectionStatus(boolean configured, boolean connected, List<SyncedCalendarInfo> calendars,
+                                  Instant lastSuccessfulSyncAt, Instant lastAttemptAt, String syncIssue) {
+        this(configured, connected, calendars, lastSuccessfulSyncAt, lastAttemptAt, syncIssue, false);
+    }
     public record SyncedCalendarInfo(
             String id,
             String name,

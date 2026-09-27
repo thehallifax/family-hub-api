@@ -77,6 +77,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, request, ex.getMessage());
     }
 
+    @ExceptionHandler(GoogleWriteUncertainException.class)
+    public ResponseEntity<ErrorResponse> handleGoogleWriteUncertain(GoogleWriteUncertainException ex,
+                                                                       HttpServletRequest request) {
+        log.error("Google write succeeded but local reconciliation failed: {} {}",
+                request.getMethod(), request.getRequestURI());
+        return buildErrorResponse(HttpStatus.SERVICE_UNAVAILABLE, request, ex.getMessage());
+    }
+
     @Override
     protected @Nullable ResponseEntity<Object> handleMaxUploadSizeExceededException(
             MaxUploadSizeExceededException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {

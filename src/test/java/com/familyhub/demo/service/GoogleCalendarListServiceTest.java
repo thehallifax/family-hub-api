@@ -38,9 +38,9 @@ class GoogleCalendarListServiceTest {
                 {
                   "kind": "calendar#calendarList",
                   "items": [
-                    { "id": "primary", "summary": "Joe's Calendar", "primary": true },
-                    { "id": "work@group.calendar.google.com", "summary": "Work", "primary": false },
-                    { "id": "family@group.calendar.google.com", "summary": "Family" }
+                    { "id": "primary", "summary": "Joe's Calendar", "primary": true, "accessRole": "owner" },
+                    { "id": "work@group.calendar.google.com", "summary": "Work", "primary": false, "accessRole": "writer" },
+                    { "id": "family@group.calendar.google.com", "summary": "Family", "accessRole": "reader" }
                   ]
                 }
                 """;
@@ -82,18 +82,22 @@ class GoogleCalendarListServiceTest {
                 .findFirst().orElseThrow();
         assertThat(primary.name()).isEqualTo("Joe's Calendar");
         assertThat(primary.primary()).isTrue();
+        assertThat(primary.accessRole()).isEqualTo("owner");
+        assertThat(primary.writable()).isTrue();
 
         GoogleCalendarInfo work = calendars.stream()
                 .filter(c -> c.id().equals("work@group.calendar.google.com"))
                 .findFirst().orElseThrow();
         assertThat(work.name()).isEqualTo("Work");
         assertThat(work.primary()).isFalse();
+        assertThat(work.writable()).isTrue();
 
         GoogleCalendarInfo family = calendars.stream()
                 .filter(c -> c.id().equals("family@group.calendar.google.com"))
                 .findFirst().orElseThrow();
         assertThat(family.name()).isEqualTo("Family");
         assertThat(family.primary()).isFalse();
+        assertThat(family.writable()).isFalse();
     }
 
     @Test

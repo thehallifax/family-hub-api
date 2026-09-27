@@ -3,10 +3,14 @@ package com.familyhub.demo.integration;
 import com.familyhub.demo.config.TestcontainersConfig;
 import com.familyhub.demo.model.GoogleSyncedCalendar;
 import com.familyhub.demo.repository.GoogleSyncedCalendarRepository;
+import com.familyhub.demo.repository.CalendarEventRepository;
 import com.familyhub.demo.service.GoogleCalendarSyncService;
 import com.familyhub.demo.service.GoogleCalendarSelectionService;
 import com.familyhub.demo.service.GoogleOAuthService;
 import com.familyhub.demo.service.CalendarEventService;
+import com.familyhub.demo.service.GoogleEventPersistenceService;
+import com.familyhub.demo.model.EventAudienceType;
+import com.familyhub.demo.model.FamilyMember;
 import com.google.api.client.util.DateTime;
 import com.google.api.services.calendar.model.Event;
 import com.google.api.services.calendar.model.EventDateTime;
@@ -33,6 +37,8 @@ class GoogleEventIsolationTest {
     @Autowired GoogleCalendarSelectionService selections;
     @Autowired GoogleOAuthService oauth;
     @Autowired CalendarEventService events;
+    @Autowired GoogleEventPersistenceService googlePersistence;
+    @Autowired CalendarEventRepository calendarEvents;
 
     private GoogleSyncedCalendar calendar() {
         UUID family = UUID.randomUUID();
@@ -43,8 +49,8 @@ class GoogleEventIsolationTest {
                 family, "Test", family.toString(), "hash");
         jdbc.update("INSERT INTO family_member (id,family_id,name,color) VALUES (?,?,?,?)",
                 member, family, "Member", "CORAL");
-        jdbc.update("INSERT INTO google_oauth_token (id,member_id,access_token,refresh_token,token_expiry,scope) VALUES (?,?,?,?,now(),'scope')",
-                token, member, "encrypted", "encrypted");
+        jdbc.update("INSERT INTO google_oauth_token (id,member_id,access_token,refresh_token,token_expiry,scope) VALUES (?,?,?,?,now(),?)",
+                token, member, "encrypted", "encrypted", GoogleOAuthService.EVENT_WRITE_SCOPE);
         jdbc.update("INSERT INTO google_synced_calendar (id,token_id,member_id,google_calendar_id,calendar_name) VALUES (?,?,?,?,?)",
                 calendar, token, member, calendar.toString(), "Calendar");
         return calendars.findById(calendar).orElseThrow();
@@ -63,6 +69,66 @@ class GoogleEventIsolationTest {
                 SELECT ?,token_id,member_id,?,? FROM google_synced_calendar WHERE id=?
                 """, id, id.toString(), "Other calendar", first.getId());
         return calendars.findById(id).orElseThrow();
+    }
+
+    @Test
+    void googleWriteLookupKeepsRequiredLazyLinkageAvailableOutsideRepositorySession() {
+        GoogleSyncedCalendar selected = calendar();
+        String googleId = "delete-" + UUID.randomUUID();
+        var created = googlePersistence.persist(selected.getId(), selected.getMember().getId(),
+                selected.getMember().getFamily(), event(googleId, "Delete candidate"),
+                EventAudienceType.FAMILY, List.of());
+
+        var loaded = calendarEvents.findGoogleEventForWrite(
+                selected.getMember().getFamily(), created.id()).orElseThrow();
+
+        assertThat(loaded.getSyncedCalendar().isEnabled()).isTrue();
+        assertThat(loaded.getSyncedCalendar().getMember().getFamily().getId())
+                .isEqualTo(selected.getMember().getFamily().getId());
+        assertThat(loaded.getSyncedCalendar().getToken().getId()).isNotNull();
+        assertThat(loaded.getSourceOwnerMember().getId()).isEqualTo(selected.getMember().getId());
+    }
+
+    @Test
+    void googleCreatedRowIsSingleScopedRowAndFullSyncKeepsHouseholdAudience() {
+        GoogleSyncedCalendar selected = calendar();
+        GoogleSyncedCalendar other = secondCalendarForSameMember(selected);
+        UUID familyId = selected.getMember().getFamily().getId();
+        UUID secondMemberId = UUID.randomUUID();
+        jdbc.update("INSERT INTO family_member(id,family_id,name,color) VALUES (?,?,?,?)",
+                secondMemberId, familyId, "Other", "CORAL");
+        FamilyMember secondMember = new FamilyMember();
+        secondMember.setId(secondMemberId);
+        secondMember.setFamily(selected.getMember().getFamily());
+        String googleId = "shared-" + UUID.randomUUID();
+        Event fromGoogle = event(googleId, "Google created").setEtag("etag");
+
+        var created = googlePersistence.persist(selected.getId(), selected.getMember().getId(),
+                selected.getMember().getFamily(), fromGoogle, EventAudienceType.FAMILY, List.of());
+        assertThat(created.source()).isEqualTo("GOOGLE");
+        assertThat(created.audienceType()).isEqualTo(EventAudienceType.FAMILY);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE family_id=? AND google_event_id=?",
+                Integer.class, familyId, googleId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE family_id=? AND source='NATIVE' AND title='Google created'",
+                Integer.class, familyId)).isZero();
+
+        sync.persistFullSync(other, List.of(event(googleId, "Other calendar")));
+        sync.persistFullSync(selected, List.of(event(googleId, "Current Google title")));
+        assertThat(jdbc.queryForObject("SELECT audience_type FROM calendar_event WHERE synced_calendar_id=? AND google_event_id=?",
+                String.class, selected.getId(), googleId)).isEqualTo("FAMILY");
+        assertThat(jdbc.queryForObject("SELECT audience_type FROM calendar_event WHERE synced_calendar_id=? AND google_event_id=?",
+                String.class, other.getId(), googleId)).isEqualTo("MEMBERS");
+
+        googlePersistence.persist(selected.getId(), selected.getMember().getId(), selected.getMember().getFamily(),
+                fromGoogle, EventAudienceType.MEMBERS, List.of(selected.getMember(), secondMember));
+        sync.persistIncrementalChanges(selected, List.of(event(googleId, "Incremental title")));
+        sync.persistFullSync(selected, List.of(event(googleId, "Full title")));
+        assertThat(jdbc.queryForObject("SELECT audience_type FROM calendar_event WHERE synced_calendar_id=? AND google_event_id=?",
+                String.class, selected.getId(), googleId)).isEqualTo("MEMBERS");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event_member m JOIN calendar_event e ON e.id=m.event_id WHERE e.synced_calendar_id=? AND e.google_event_id=?",
+                Integer.class, selected.getId(), googleId)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM calendar_event WHERE synced_calendar_id=? AND google_event_id=?",
+                Integer.class, other.getId(), googleId)).isEqualTo(1);
     }
 
     @Test
