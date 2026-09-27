@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -38,6 +39,10 @@ class GoogleCalendarSyncServiceTest {
     private GoogleCredentialService credentialService;
     @Mock
     private GoogleSyncStatusTracker statusTracker;
+    @Mock
+    private GoogleCalendarListService calendarListService;
+    @Mock
+    private GoogleCalendarSelectionService selectionService;
 
     @Spy
     @InjectMocks
@@ -70,6 +75,8 @@ class GoogleCalendarSyncServiceTest {
         syncedCal.setEnabled(true);
         lenient().when(syncedCalendarRepository.findByIdForUpdate(syncedCal.getId()))
                 .thenReturn(Optional.of(syncedCal));
+        lenient().when(calendarListService.listCalendars(member.getId()))
+                .thenReturn(java.util.List.of(new com.familyhub.demo.dto.GoogleCalendarInfo("primary", "Primary", true)));
     }
 
     @Test
@@ -220,6 +227,50 @@ class GoogleCalendarSyncServiceTest {
         syncService.fullSync(syncedCal, calendarClient);
 
         assertThat(syncedCal.getLastSyncedAt()).isNotNull();
+    }
+
+    @Test
+    void fullSync_fetchesEveryEventPageBeforeReplacingRows() throws IOException {
+        Event first = createTimedGoogleEvent("first", "First", "2025-06-15T09:00:00-04:00", "2025-06-15T10:00:00-04:00");
+        Event second = createTimedGoogleEvent("second", "Second", "2025-06-16T09:00:00-04:00", "2025-06-16T10:00:00-04:00");
+        Calendar client = mock(Calendar.class);
+        Calendar.Events events = mock(Calendar.Events.class);
+        Calendar.Events.List request = mock(Calendar.Events.List.class);
+        when(client.events()).thenReturn(events);
+        when(events.list("primary")).thenReturn(request);
+        when(request.setSingleEvents(false)).thenReturn(request);
+        when(request.setMaxResults(250)).thenReturn(request);
+        when(request.setPageToken(any())).thenReturn(request);
+        when(request.execute()).thenReturn(
+                new com.google.api.services.calendar.model.Events().setItems(java.util.List.of(first)).setNextPageToken("next"),
+                new com.google.api.services.calendar.model.Events().setItems(java.util.List.of(second)).setNextSyncToken("new-token"));
+
+        syncService.fullSync(syncedCal, client);
+
+        verify(calendarEventRepository).deleteBySyncedCalendarAndSource(syncedCal, EventSource.GOOGLE);
+        verify(googleEventMapper).toEntity(first, syncedCal);
+        verify(googleEventMapper).toEntity(second, syncedCal);
+        assertThat(syncedCal.getSyncToken()).isEqualTo("new-token");
+    }
+
+    @Test
+    void failedLaterEventPageRetainsImportedRows() throws IOException {
+        Calendar client = mock(Calendar.class);
+        Calendar.Events events = mock(Calendar.Events.class);
+        Calendar.Events.List request = mock(Calendar.Events.List.class);
+        when(client.events()).thenReturn(events);
+        when(events.list("primary")).thenReturn(request);
+        when(request.setSingleEvents(false)).thenReturn(request);
+        when(request.setMaxResults(250)).thenReturn(request);
+        when(request.setPageToken(any())).thenReturn(request);
+        when(request.execute()).thenReturn(
+                        new com.google.api.services.calendar.model.Events().setItems(java.util.List.of()).setNextPageToken("next"))
+                .thenThrow(new IOException("page failed"));
+
+        assertThatThrownBy(() -> syncService.fullSync(syncedCal, client))
+                .isInstanceOf(RuntimeException.class).hasMessageContaining("sync failed");
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(any(), any());
+        verify(syncService, never()).persistFullSync(any(), any());
     }
 
     @Test
@@ -572,6 +623,9 @@ class GoogleCalendarSyncServiceTest {
 
         when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
                 .thenReturn(java.util.List.of(cal1, cal2));
+        when(calendarListService.listCalendars(member.getId())).thenReturn(java.util.List.of(
+                new com.familyhub.demo.dto.GoogleCalendarInfo("cal-1", "cal-1", false),
+                new com.familyhub.demo.dto.GoogleCalendarInfo("cal-2", "cal-2", false)));
 
         Calendar calendarClient = mock(Calendar.class);
         doReturn(calendarClient).when(syncService).buildCalendarClient(member.getId());
@@ -587,6 +641,53 @@ class GoogleCalendarSyncServiceTest {
         verify(statusTracker).record(eq(member.getId()), contains("Could not sync cal-1"));
         // cal2 should still have been synced despite cal1 failure
         verify(syncService).fullSync(cal2, calendarClient);
+    }
+
+    @Test
+    void manualSync_usesFullSyncEvenWithValidToken() {
+        syncedCal.setSyncToken("valid-token");
+        when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
+                .thenReturn(java.util.List.of(syncedCal));
+        Calendar client = mock(Calendar.class);
+        doReturn(client).when(syncService).buildCalendarClient(member.getId());
+        doNothing().when(syncService).fullSync(syncedCal, client);
+
+        var result = syncService.syncMemberNow(member.getId());
+
+        assertThat(result.succeeded()).isEqualTo(1);
+        verify(syncService).fullSync(syncedCal, client);
+        verify(syncService, never()).persistIncrementalChanges(any(), any());
+        verify(selectionService).disableMissingCalendars(member.getId(), java.util.Set.of(syncedCal.getId()), java.util.Set.of("primary"));
+    }
+
+    @Test
+    void failedDiscoveryDoesNotReconcileOrSync() {
+        when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
+                .thenReturn(java.util.List.of(syncedCal));
+        doReturn(mock(Calendar.class)).when(syncService).buildCalendarClient(member.getId());
+        when(calendarListService.listCalendars(member.getId()))
+                .thenThrow(new RuntimeException("second page failed"));
+
+        var result = syncService.syncMemberNow(member.getId());
+
+        assertThat(result.succeeded()).isZero();
+        assertThat(result.message()).contains("retained");
+        verifyNoInteractions(selectionService);
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(any(), any());
+        verify(syncService, never()).fullSync(any(), any());
+    }
+
+    @Test
+    void removedCalendarIsNotSyncedFromStaleSelectionSnapshot() {
+        when(syncedCalendarRepository.findByMemberIdAndEnabledTrue(member.getId()))
+                .thenReturn(java.util.List.of(syncedCal), java.util.List.of());
+        when(calendarListService.listCalendars(member.getId())).thenReturn(java.util.List.of());
+        doReturn(mock(Calendar.class)).when(syncService).buildCalendarClient(member.getId());
+
+        syncService.syncMemberNow(member.getId());
+
+        verify(selectionService).disableMissingCalendars(member.getId(), java.util.Set.of(syncedCal.getId()), java.util.Set.of());
+        verify(syncService, never()).fullSync(any(), any());
     }
 
     @Test

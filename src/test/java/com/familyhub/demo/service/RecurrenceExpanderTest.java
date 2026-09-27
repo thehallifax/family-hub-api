@@ -98,6 +98,58 @@ class RecurrenceExpanderTest {
     }
 
     @Test
+    void googleMultiDayAllDayOccurrencesShiftSpanAndOverlapRange() {
+        CalendarEvent parent = createRecurringCalendarEvent(family, member);
+        parent.setSource(com.familyhub.demo.model.EventSource.GOOGLE);
+        parent.setRecurrenceRule("FREQ=WEEKLY;BYDAY=SU");
+        parent.setDate(LocalDate.of(2025, 6, 1));
+        parent.setEndDate(LocalDate.of(2025, 6, 3));
+        parent.setAllDay(true);
+
+        List<CalendarEventResponse> result = expander.expand(
+                parent, LocalDate.of(2025, 6, 10), LocalDate.of(2025, 6, 16), Map.of());
+
+        assertThat(result).extracting(CalendarEventResponse::date)
+                .containsExactly(LocalDate.of(2025, 6, 8), LocalDate.of(2025, 6, 15));
+        assertThat(result).extracting(CalendarEventResponse::endDate)
+                .containsExactly(LocalDate.of(2025, 6, 10), LocalDate.of(2025, 6, 17));
+    }
+
+    @Test
+    void overnightGoogleSeriesUsesEditedAndCancelledExceptions() {
+        CalendarEvent parent = createRecurringCalendarEvent(family, member);
+        parent.setSource(com.familyhub.demo.model.EventSource.GOOGLE);
+        parent.setRecurrenceRule("FREQ=DAILY");
+        parent.setDate(LocalDate.of(2025, 6, 1));
+        parent.setEndDate(LocalDate.of(2025, 6, 2));
+        parent.setStartTime(LocalTime.of(23, 0));
+        parent.setEndTime(LocalTime.of(8, 0));
+
+        CalendarEvent edited = createRecurringCalendarEvent(family, member);
+        edited.setId(UUID.randomUUID());
+        edited.setRecurrenceRule(null);
+        edited.setRecurringEvent(parent);
+        edited.setOriginalDate(LocalDate.of(2025, 6, 2));
+        edited.setDate(LocalDate.of(2025, 6, 3));
+        edited.setEndDate(LocalDate.of(2025, 6, 4));
+        edited.setTitle("Edited");
+        CalendarEvent cancelled = createRecurringCalendarEvent(family, member);
+        cancelled.setRecurringEvent(parent);
+        cancelled.setOriginalDate(LocalDate.of(2025, 6, 3));
+        cancelled.setCancelled(true);
+
+        List<CalendarEventResponse> result = expander.expand(parent,
+                LocalDate.of(2025, 6, 2), LocalDate.of(2025, 6, 4),
+                Map.of(edited.getOriginalDate(), edited, cancelled.getOriginalDate(), cancelled));
+
+        assertThat(result).extracting(CalendarEventResponse::date)
+                .containsExactly(LocalDate.of(2025, 6, 1), LocalDate.of(2025, 6, 3), LocalDate.of(2025, 6, 4));
+        assertThat(result.get(1).title()).isEqualTo("Edited");
+        assertThat(result.get(1).endDate()).isEqualTo(LocalDate.of(2025, 6, 4));
+        assertThat(result).noneMatch(r -> r.date().equals(LocalDate.of(2025, 6, 2)));
+    }
+
+    @Test
     void cancelledDate_isSkipped() {
         CalendarEvent parent = createRecurringCalendarEvent(family, member);
         parent.setRecurrenceRule("FREQ=DAILY");

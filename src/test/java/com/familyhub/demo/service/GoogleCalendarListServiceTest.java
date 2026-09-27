@@ -18,8 +18,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -135,5 +137,69 @@ class GoogleCalendarListServiceTest {
         List<GoogleCalendarInfo> calendars = service.listCalendars(memberId);
 
         assertThat(calendars).isEmpty();
+    }
+
+    @Test
+    void listCalendars_fetchesAllPagesIncludingHidden() {
+        UUID memberId = UUID.randomUUID();
+        List<String> urls = new ArrayList<>();
+        HttpTransport transport = new MockHttpTransport() {
+            @Override
+            public LowLevelHttpRequest buildRequest(String method, String url) {
+                urls.add(url);
+                String body = urls.size() == 1
+                        ? "{\"items\":[{\"id\":\"primary\"}],\"nextPageToken\":\"next\"}"
+                        : "{\"items\":[{\"id\":\"hidden\",\"hidden\":true}]}";
+                return new MockLowLevelHttpRequest() {
+                    @Override
+                    public LowLevelHttpResponse execute() {
+                        return new MockLowLevelHttpResponse().setContentType("application/json").setContent(body);
+                    }
+                };
+            }
+        };
+        stubCredentials(memberId, transport);
+
+        var result = new GoogleCalendarListService(credentialService).listCalendars(memberId);
+
+        assertThat(result).extracting(GoogleCalendarInfo::id).containsExactly("primary", "hidden");
+        assertThat(urls).hasSize(2).allSatisfy(url -> assertThat(url).contains("showHidden=true"));
+        assertThat(urls.get(1)).contains("pageToken=next");
+    }
+
+    @Test
+    void listCalendars_secondPageFailureDoesNotReturnPartialDiscovery() {
+        UUID memberId = UUID.randomUUID();
+        HttpTransport transport = new MockHttpTransport() {
+            @Override
+            public LowLevelHttpRequest buildRequest(String method, String url) {
+                return new MockLowLevelHttpRequest() {
+                    @Override
+                    public LowLevelHttpResponse execute() {
+                        if (url.contains("pageToken=next")) {
+                            return new MockLowLevelHttpResponse().setStatusCode(503).setReasonPhrase("Unavailable")
+                                    .setContentType("application/json").setContent("{}");
+                        }
+                        return new MockLowLevelHttpResponse().setContentType("application/json")
+                                .setContent("{\"items\":[{\"id\":\"primary\"}],\"nextPageToken\":\"next\"}");
+                    }
+                };
+            }
+        };
+        stubCredentials(memberId, transport);
+
+        assertThatThrownBy(() -> new GoogleCalendarListService(credentialService).listCalendars(memberId))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to fetch");
+    }
+
+    private void stubCredentials(UUID memberId, HttpTransport transport) {
+        JsonFactory jsonFactory = GsonFactory.getDefaultInstance();
+        Credential credential = new Credential.Builder(BearerToken.authorizationHeaderAccessMethod())
+                .setTransport(transport).setJsonFactory(jsonFactory).build();
+        credential.setAccessToken("fake-token");
+        when(credentialService.getCredential(memberId)).thenReturn(credential);
+        when(credentialService.getHttpTransport()).thenReturn(transport);
+        when(credentialService.getJsonFactory()).thenReturn(jsonFactory);
     }
 }

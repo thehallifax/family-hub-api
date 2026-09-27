@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,14 +33,20 @@ public class GoogleCalendarListService {
                 .build();
 
         try {
-            CalendarList calendarList = calendarClient.calendarList().list().execute();
-            List<CalendarListEntry> items = calendarList.getItems();
-            if (items == null) {
-                return List.of();
-            }
-            return items.stream()
-                    .map(this::toCalendarInfo)
-                    .toList();
+            List<GoogleCalendarInfo> calendars = new ArrayList<>();
+            String pageToken = null;
+            do {
+                CalendarList page = calendarClient.calendarList().list()
+                        .setShowHidden(true)
+                        .setPageToken(pageToken)
+                        .execute();
+                List<CalendarListEntry> items = page.getItems();
+                if (items != null) {
+                    items.stream().map(this::toCalendarInfo).forEach(calendars::add);
+                }
+                pageToken = page.getNextPageToken();
+            } while (pageToken != null);
+            return calendars;
         } catch (IOException e) {
             log.error("Failed to list calendars for member {}: {}", memberId, e.getMessage());
             throw new RuntimeException("Failed to fetch Google calendars", e);

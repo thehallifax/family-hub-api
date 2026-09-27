@@ -28,7 +28,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -40,6 +42,8 @@ public class GoogleCalendarSyncService {
     private final GoogleEventMapper googleEventMapper;
     private final GoogleCredentialService credentialService;
     private final GoogleSyncStatusTracker statusTracker;
+    private final GoogleCalendarListService calendarListService;
+    private final GoogleCalendarSelectionService selectionService;
 
     @Lazy
     @Autowired
@@ -52,11 +56,15 @@ public class GoogleCalendarSyncService {
 
     @Async
     public void syncMember(UUID memberId) {
-        syncMemberNow(memberId);
+        syncMemberInternal(memberId, false);
     }
 
-    /** Runs to completion for manual requests; asynchronous callers use syncMember. */
+    /** Manual Sync Now reconciles every selected calendar from a complete full fetch. */
     public GoogleSyncResult syncMemberNow(UUID memberId) {
+        return syncMemberInternal(memberId, true);
+    }
+
+    private GoogleSyncResult syncMemberInternal(UUID memberId, boolean forceFull) {
         List<GoogleSyncedCalendar> calendars;
         try {
             calendars = syncedCalendarRepository.findByMemberIdAndEnabledTrue(memberId);
@@ -82,6 +90,37 @@ public class GoogleCalendarSyncService {
             return new GoogleSyncResult(0, calendars.stream().map(this::calendarLabel).toList(), issue);
         }
 
+        Set<UUID> selectedRowIds = calendars.stream().map(GoogleSyncedCalendar::getId).collect(Collectors.toSet());
+        Set<String> discoveredIds;
+        try {
+            discoveredIds = calendarListService.listCalendars(memberId).stream()
+                    .map(com.familyhub.demo.dto.GoogleCalendarInfo::id)
+                    .collect(Collectors.toSet());
+        } catch (Exception e) {
+            log.error("Could not complete Google calendar discovery for member {}", memberId, e);
+            String issue = "Could not verify Google calendars. Imported events were retained; retry shortly.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, calendars.stream().map(this::calendarLabel).toList(), issue);
+        }
+        try {
+            selectionService.disableMissingCalendars(memberId, selectedRowIds, discoveredIds);
+            // Use the committed selection state, not the pre-discovery snapshot.
+            calendars = syncedCalendarRepository.findByMemberIdAndEnabledTrue(memberId).stream()
+                    .filter(cal -> selectedRowIds.contains(cal.getId()))
+                    .filter(cal -> discoveredIds.contains(cal.getGoogleCalendarId()))
+                    .toList();
+        } catch (Exception e) {
+            log.error("Could not reconcile Google calendars for member {}", memberId, e);
+            String issue = "Could not reconcile Google calendars. Retry shortly.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, calendars.stream().map(this::calendarLabel).toList(), issue);
+        }
+        if (calendars.isEmpty()) {
+            String issue = "Selected Google calendars are no longer available. Choose calendars to sync.";
+            statusTracker.record(memberId, issue);
+            return new GoogleSyncResult(0, List.of(), issue);
+        }
+
         int succeeded = 0;
         List<String> failed = new ArrayList<>();
 
@@ -92,7 +131,7 @@ public class GoogleCalendarSyncService {
         // deleteByMemberAndSource, which is no longer used in sync.
         for (GoogleSyncedCalendar cal : calendars) {
             try {
-                if (cal.getSyncToken() != null) {
+                if (!forceFull && cal.getSyncToken() != null) {
                     incrementalSync(cal, calendarClient);
                 } else {
                     fullSync(cal, calendarClient);
@@ -171,6 +210,9 @@ public class GoogleCalendarSyncService {
         }
         current.setSyncToken(syncedCal.getSyncToken());
         calendarEventRepository.deleteBySyncedCalendarAndSource(current, EventSource.GOOGLE);
+        // The same Google event IDs may be reinserted below. Execute deletes first
+        // so the per-calendar unique constraint cannot see stale rows.
+        calendarEventRepository.flush();
         Map<GoogleSyncedCalendar, List<Event>> eventsByCalendar = Map.of(current, allEvents);
         saveGoogleEvents(allEvents, eventsByCalendar);
         current.setLastSyncedAt(Instant.now());

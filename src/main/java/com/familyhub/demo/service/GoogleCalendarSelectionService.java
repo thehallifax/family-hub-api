@@ -48,6 +48,17 @@ public class GoogleCalendarSelectionService {
                 .toList();
     }
 
+    /** Called only after CalendarList discovery has completed every page successfully. */
+    @Transactional
+    public void disableMissingCalendars(UUID memberId, Set<UUID> candidateIds, Set<String> discoveredIds) {
+        for (GoogleSyncedCalendar stored : syncedCalendarRepository.findByMemberIdForUpdate(memberId)) {
+            if (candidateIds.contains(stored.getId()) && stored.isEnabled()
+                    && !discoveredIds.contains(stored.getGoogleCalendarId())) {
+                disableCalendar(stored);
+            }
+        }
+    }
+
     @Transactional
     public List<GoogleCalendarResponse> updateCalendarSelections(UUID memberId, List<String> calendarIds) {
         GoogleOAuthToken token = tokenRepository.findByMemberId(memberId)
@@ -86,18 +97,31 @@ public class GoogleCalendarSelectionService {
                     syncedCalendarRepository.save(existing);
                 }
             } else if (existing != null && existing.isEnabled()) {
-                calendarEventRepository.deleteBySyncedCalendarAndSource(existing, EventSource.GOOGLE);
-                existing.setSyncToken(null);
-                existing.setLastSyncedAt(null);
-                existing.setEnabled(false);
-                syncedCalendarRepository.save(existing);
+                disableCalendar(existing);
             }
 
             response.add(new GoogleCalendarResponse(cal.id(), cal.name(), cal.primary(), shouldEnable));
         }
 
+        // A removed subscription is not in the discovery response, so it cannot be
+        // handled by the loop above. Discovery is complete before this transaction locks rows.
+        Set<String> discoveredIds = googleCalendars.stream().map(GoogleCalendarInfo::id).collect(Collectors.toSet());
+        for (GoogleSyncedCalendar stored : existingByGoogleId.values()) {
+            if (stored.isEnabled() && !discoveredIds.contains(stored.getGoogleCalendarId())) {
+                disableCalendar(stored);
+            }
+        }
+
         eventPublisher.publishEvent(new SyncRequestedEvent(memberId));
 
         return response;
+    }
+
+    private void disableCalendar(GoogleSyncedCalendar calendar) {
+        calendarEventRepository.deleteBySyncedCalendarAndSource(calendar, EventSource.GOOGLE);
+        calendar.setSyncToken(null);
+        calendar.setLastSyncedAt(null);
+        calendar.setEnabled(false);
+        syncedCalendarRepository.save(calendar);
     }
 }

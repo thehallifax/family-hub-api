@@ -170,6 +170,37 @@ class GoogleEventMapperTest {
         }
 
         @Test
+        void recurringTimedParentCrossingMidnightRetainsDurationAndRule() {
+            Event googleEvent = new Event().setId("overnight-series")
+                    .setStart(new EventDateTime().setDateTime(new DateTime("2025-06-15T23:00:00+08:00")))
+                    .setEnd(new EventDateTime().setDateTime(new DateTime("2025-06-16T08:00:00+08:00")))
+                    .setRecurrence(List.of("RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+            CalendarEvent entity = mapper.toEntity(googleEvent, syncedCal);
+
+            assertThat(entity.getDate()).isEqualTo(LocalDate.of(2025, 6, 15));
+            assertThat(entity.getEndDate()).isEqualTo(LocalDate.of(2025, 6, 16));
+            assertThat(entity.getStartTime()).isEqualTo(LocalTime.of(23, 0));
+            assertThat(entity.getEndTime()).isEqualTo(LocalTime.of(8, 0));
+            assertThat(entity.getRecurrenceRule()).isEqualTo("FREQ=WEEKLY;BYDAY=SU");
+        }
+
+        @Test
+        void recurringAllDayParentRetainsInclusiveMultiDaySpanAndRule() {
+            Event googleEvent = new Event().setId("multiday-series")
+                    .setStart(new EventDateTime().setDate(new DateTime("2025-06-15")))
+                    .setEnd(new EventDateTime().setDate(new DateTime("2025-06-18")))
+                    .setRecurrence(List.of("RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+            CalendarEvent entity = mapper.toEntity(googleEvent, syncedCal);
+
+            assertThat(entity.isAllDay()).isTrue();
+            assertThat(entity.getDate()).isEqualTo(LocalDate.of(2025, 6, 15));
+            assertThat(entity.getEndDate()).isEqualTo(LocalDate.of(2025, 6, 17));
+            assertThat(entity.getRecurrenceRule()).isEqualTo("FREQ=WEEKLY;BYDAY=SU");
+        }
+
+        @Test
         void handlesRecurrenceListWithNoRrule() {
             Event googleEvent = new Event();
             googleEvent.setId("exdate-only");

@@ -153,6 +153,76 @@ class GoogleCalendarSelectionServiceTest {
     }
 
     @Test
+    void successfulDiscoveryDisablesOnlyMissingEnabledCalendar() {
+        GoogleSyncedCalendar missing = new GoogleSyncedCalendar();
+        missing.setId(UUID.randomUUID());
+        missing.setGoogleCalendarId("removed");
+        missing.setEnabled(true);
+        missing.setSyncToken("old-token");
+        missing.setLastSyncedAt(java.time.Instant.now());
+        GoogleSyncedCalendar present = new GoogleSyncedCalendar();
+        present.setId(UUID.randomUUID());
+        present.setGoogleCalendarId("hidden-but-present");
+        present.setEnabled(true);
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID))
+                .thenReturn(List.of(missing, present));
+
+        selectionService.disableMissingCalendars(MEMBER_ID,
+                java.util.Set.of(missing.getId(), present.getId()), java.util.Set.of("hidden-but-present"));
+
+        assertThat(missing.isEnabled()).isFalse();
+        assertThat(missing.getSyncToken()).isNull();
+        assertThat(missing.getLastSyncedAt()).isNull();
+        assertThat(present.isEnabled()).isTrue();
+        verify(calendarEventRepository).deleteBySyncedCalendarAndSource(missing, EventSource.GOOGLE);
+        verify(calendarEventRepository, never()).deleteBySyncedCalendarAndSource(present, EventSource.GOOGLE);
+    }
+
+    @Test
+    void oldDiscoveryCannotDisableSelectionCreatedAfterReconnect() {
+        GoogleSyncedCalendar replacement = new GoogleSyncedCalendar();
+        replacement.setId(UUID.randomUUID());
+        replacement.setGoogleCalendarId("new-account-calendar");
+        replacement.setEnabled(true);
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID)).thenReturn(List.of(replacement));
+
+        selectionService.disableMissingCalendars(MEMBER_ID, java.util.Set.of(UUID.randomUUID()), java.util.Set.of());
+
+        assertThat(replacement.isEnabled()).isTrue();
+        verifyNoInteractions(calendarEventRepository);
+    }
+
+    @Test
+    void selectionUpdateAlsoDisablesCalendarMissingFromCompleteDiscovery() {
+        GoogleOAuthToken token = new GoogleOAuthToken();
+        token.setMember(new FamilyMember());
+        when(tokenRepository.findByMemberId(MEMBER_ID)).thenReturn(Optional.of(token));
+        when(calendarListService.listCalendars(MEMBER_ID))
+                .thenReturn(List.of(new GoogleCalendarInfo("present", "Present", true)));
+        GoogleSyncedCalendar missing = new GoogleSyncedCalendar();
+        missing.setGoogleCalendarId("removed");
+        missing.setEnabled(true);
+        when(syncedCalendarRepository.findByMemberIdForUpdate(MEMBER_ID)).thenReturn(List.of(missing));
+
+        selectionService.updateCalendarSelections(MEMBER_ID, List.of("present"));
+
+        assertThat(missing.isEnabled()).isFalse();
+        verify(calendarEventRepository).deleteBySyncedCalendarAndSource(missing, EventSource.GOOGLE);
+    }
+
+    @Test
+    void failedDiscoveryDuringSelectionUpdateDoesNotDeleteImportedEvents() {
+        GoogleOAuthToken token = new GoogleOAuthToken();
+        when(tokenRepository.findByMemberId(MEMBER_ID)).thenReturn(Optional.of(token));
+        when(calendarListService.listCalendars(MEMBER_ID))
+                .thenThrow(new RuntimeException("second page failed"));
+
+        assertThatThrownBy(() -> selectionService.updateCalendarSelections(MEMBER_ID, List.of()))
+                .hasMessageContaining("second page failed");
+        verifyNoInteractions(calendarEventRepository, syncedCalendarRepository);
+    }
+
+    @Test
     void listCalendarsWithSelections_notConnected_throwsBadRequest() {
         when(tokenRepository.findByMemberId(MEMBER_ID)).thenReturn(Optional.empty());
 
