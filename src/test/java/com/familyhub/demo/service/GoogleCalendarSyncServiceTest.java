@@ -422,6 +422,80 @@ class GoogleCalendarSyncServiceTest {
     }
 
     @Test
+    void fullSyncPreservesSeriesAudienceAndExplicitOccurrenceOverride() {
+        Event googleParent = createTimedGoogleEvent("parent-audience", "Series",
+                "2026-09-27T09:00:00+08:00", "2026-09-27T10:00:00+08:00");
+        googleParent.setRecurrence(java.util.List.of("RRULE:FREQ=WEEKLY;BYDAY=SU"));
+        Event googleException = createTimedGoogleEvent("instance-audience", "Exception",
+                "2026-10-04T11:00:00+08:00", "2026-10-04T12:00:00+08:00");
+        googleException.setRecurringEventId("parent-audience");
+        googleException.setOriginalStartTime(new EventDateTime()
+                .setDateTime(new DateTime("2026-10-04T09:00:00+08:00")));
+
+        FamilyMember occurrenceMember = new FamilyMember();
+        occurrenceMember.setId(UUID.randomUUID());
+        occurrenceMember.setFamily(family);
+        CalendarEvent oldParent = new CalendarEvent();
+        oldParent.setGoogleEventId("parent-audience");
+        oldParent.setAudienceType(EventAudienceType.MEMBERS);
+        oldParent.getAudienceMembers().add(member);
+        CalendarEvent oldException = new CalendarEvent();
+        oldException.setGoogleEventId("instance-audience");
+        oldException.setAudienceType(EventAudienceType.MEMBERS);
+        oldException.getAudienceMembers().add(occurrenceMember);
+        oldException.setGoogleAudienceOverride(true);
+        when(calendarEventRepository.findBySyncedCalendarAndSource(syncedCal, EventSource.GOOGLE))
+                .thenReturn(java.util.List.of(oldParent, oldException));
+
+        CalendarEvent newParent = new CalendarEvent();
+        newParent.setId(UUID.randomUUID());
+        when(googleEventMapper.toEntity(googleParent, syncedCal)).thenReturn(newParent);
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(
+                syncedCal, EventSource.GOOGLE, "parent-audience")).thenReturn(Optional.of(newParent));
+        CalendarEvent newException = new CalendarEvent();
+        when(googleEventMapper.toExceptionEntity(googleException, syncedCal, newParent))
+                .thenReturn(newException);
+
+        syncService.persistFullSync(syncedCal, java.util.List.of(googleParent, googleException));
+
+        assertThat(newParent.getAudienceMembers()).containsExactly(member);
+        assertThat(newException.getAudienceMembers()).containsExactly(occurrenceMember);
+        assertThat(newException.isGoogleAudienceOverride()).isTrue();
+        verify(calendarEventRepository).save(newException);
+    }
+
+    @Test
+    void incrementalSyncUpdatesOccurrenceWithoutLosingAudienceOverrideOrCreatingDuplicate() {
+        Event changed = createTimedGoogleEvent("instance-existing", "Moved occurrence",
+                "2026-10-04T11:00:00+08:00", "2026-10-04T12:00:00+08:00");
+        changed.setRecurringEventId("parent-existing");
+        changed.setOriginalStartTime(new EventDateTime()
+                .setDateTime(new DateTime("2026-10-04T09:00:00+08:00")));
+        CalendarEvent parent = new CalendarEvent();
+        parent.setGoogleEventId("parent-existing");
+        CalendarEvent existing = new CalendarEvent();
+        existing.setId(UUID.randomUUID());
+        existing.setTitle("Old occurrence");
+        existing.setGoogleAudienceOverride(true);
+        existing.getAudienceMembers().add(member);
+        CalendarEvent mapped = new CalendarEvent();
+        mapped.setTitle("Moved occurrence");
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(
+                syncedCal, EventSource.GOOGLE, "parent-existing")).thenReturn(Optional.of(parent));
+        when(googleEventMapper.toExceptionEntity(changed, syncedCal, parent)).thenReturn(mapped);
+        when(calendarEventRepository.findBySyncedCalendarAndSourceAndGoogleEventId(
+                syncedCal, EventSource.GOOGLE, "instance-existing")).thenReturn(Optional.of(existing));
+
+        syncService.persistIncrementalChanges(syncedCal, java.util.List.of(changed));
+
+        assertThat(existing.getTitle()).isEqualTo("Moved occurrence");
+        assertThat(existing.getAudienceMembers()).containsExactly(member);
+        assertThat(existing.isGoogleAudienceOverride()).isTrue();
+        verify(calendarEventRepository).save(existing);
+        verify(googleEventMapper, never()).toEntity(changed, syncedCal);
+    }
+
+    @Test
     void persistIncrementalChanges_newEvent_isSaved() {
         Event newGoogleEvent = createTimedGoogleEvent("new-evt-1", "New Meeting",
                 "2025-06-15T09:00:00-04:00", "2025-06-15T10:00:00-04:00");

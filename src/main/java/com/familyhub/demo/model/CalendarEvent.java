@@ -95,4 +95,7 @@ public class CalendarEvent {
 
     @Column(columnDefinition = "TEXT")
     private String exdates;
+
+    @Column(name = "google_audience_override", nullable = false)
+    private boolean googleAudienceOverride;
 }

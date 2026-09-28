@@ -55,6 +55,8 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEvent, UU
             "WHERE e.recurringEvent.id IN :parentIds")
     List<CalendarEvent> findExceptionsByParentIds(@Param("parentIds") Collection<UUID> parentIds);
 
+    List<CalendarEvent> findByRecurringEvent(CalendarEvent recurringEvent);
+
     Optional<CalendarEvent> findByRecurringEventAndOriginalDate(CalendarEvent recurringEvent, LocalDate originalDate);
 
     Optional<CalendarEvent> findBySyncedCalendarAndSourceAndGoogleEventId(

@@ -219,7 +219,8 @@ public class GoogleCalendarSyncService {
                 .filter(event -> event.getGoogleEventId() != null)
                 .collect(Collectors.toMap(CalendarEvent::getGoogleEventId,
                         event -> new AudienceSnapshot(event.getAudienceType(),
-                                new LinkedHashSet<>(event.getAudienceMembers()))));
+                                new LinkedHashSet<>(event.getAudienceMembers()),
+                                event.isGoogleAudienceOverride())));
         calendarEventRepository.deleteBySyncedCalendarAndSource(current, EventSource.GOOGLE);
         // The same Google event IDs may be reinserted below. Execute deletes first
         // so the per-calendar unique constraint cannot see stale rows.
@@ -234,11 +235,13 @@ public class GoogleCalendarSyncService {
      * Saves Google events: parents/regular first (flush), then exceptions.
      * Cancelled non-recurring events and orphaned exceptions are skipped.
      */
-    private record AudienceSnapshot(EventAudienceType type, LinkedHashSet<FamilyMember> members) {
+    private record AudienceSnapshot(EventAudienceType type, LinkedHashSet<FamilyMember> members,
+                                    boolean occurrenceOverride) {
         void apply(CalendarEvent event) {
             event.setAudienceType(type);
             event.getAudienceMembers().clear();
             event.getAudienceMembers().addAll(members);
+            event.setGoogleAudienceOverride(occurrenceOverride);
         }
     }
 
@@ -280,7 +283,14 @@ public class GoogleCalendarSyncService {
             CalendarEvent exceptionEntity = googleEventMapper.toExceptionEntity(
                     exception, syncedCal, parentEntity.get());
             AudienceSnapshot previous = audiences.get(exception.getId());
-            if (previous != null) previous.apply(exceptionEntity);
+            if (previous != null && previous.occurrenceOverride()) {
+                previous.apply(exceptionEntity);
+            } else {
+                exceptionEntity.setAudienceType(parentEntity.get().getAudienceType());
+                exceptionEntity.getAudienceMembers().clear();
+                exceptionEntity.getAudienceMembers().addAll(parentEntity.get().getAudienceMembers());
+                exceptionEntity.setGoogleAudienceOverride(false);
+            }
             calendarEventRepository.save(exceptionEntity);
         }
     }
@@ -381,7 +391,13 @@ public class GoogleCalendarSyncService {
                             updateExistingEvent(existing, entity);
                             calendarEventRepository.save(existing);
                         },
-                        () -> calendarEventRepository.save(entity)
+                        () -> {
+                            entity.setAudienceType(parentOpt.get().getAudienceType());
+                            entity.getAudienceMembers().clear();
+                            entity.getAudienceMembers().addAll(parentOpt.get().getAudienceMembers());
+                            entity.setGoogleAudienceOverride(false);
+                            calendarEventRepository.save(entity);
+                        }
                 );
     }
 

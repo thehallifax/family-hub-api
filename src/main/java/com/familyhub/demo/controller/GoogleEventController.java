@@ -55,7 +55,7 @@ public class GoogleEventController {
             @PathVariable UUID eventId,
             @AuthenticationPrincipal Family family,
             @Valid @RequestBody GoogleEventUpdateRequest request) {
-        return ResponseEntity.ok(new ApiResponse<>(update.update(family, eventId, request.event()),
+        return ResponseEntity.ok(new ApiResponse<>(update.update(family, eventId, request),
                 "Google event updated"));
     }
 }
